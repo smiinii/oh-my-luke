@@ -1,0 +1,11 @@
+* text=auto
+/gradlew text eol=lf
+/gradlew.bat text eol=crlf
+*.java text eol=lf
+*.kt text eol=lf
+*.kts text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf

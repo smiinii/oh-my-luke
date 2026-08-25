@@ -1,0 +1,16 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+
+# OML runtime state
+.oml/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
