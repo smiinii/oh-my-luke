@@ -250,6 +250,8 @@ class ProcessToolTest {
         assertFalse(authVariants.standardOutput().contains("opaque-cookie"));
         assertFalse(authVariants.standardOutput().contains("opaque-equals-cookie"));
         assertFalse(authVariants.standardOutput().contains("opaque-equals-set-cookie"));
+        assertTrue(authVariants.standardOutput().contains("fortuneCookie=chocolate"));
+        assertTrue(authVariants.standardOutput().contains("acceptCookie=false"));
         assertFalse(partial.standardOutput().contains("ghp_"));
         assertTrue(partial.standardOutput().contains("[REDACTED]"));
         assertEquals(128, large.standardOutput().length());
