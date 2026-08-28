@@ -33,10 +33,14 @@ public record ToolPermissionRequest(
     }
 
     private static String normalizeProjectRoot(Path projectRoot) {
-        return Objects.requireNonNull(projectRoot, "projectRoot")
+        Path normalized = Objects.requireNonNull(projectRoot, "projectRoot")
                 .toAbsolutePath()
-                .normalize()
-                .toString();
+                .normalize();
+        try {
+            return normalized.toRealPath().toString();
+        } catch (java.io.IOException ignored) {
+            return normalized.toString();
+        }
     }
 
     private static String requireText(String value, String name) {

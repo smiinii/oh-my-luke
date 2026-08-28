@@ -232,8 +232,8 @@ public final class ManagedRunService {
                 new ProgressObservation(
                         0,
                         0,
-                        0,
-                        0,
+                        transition.metrics().toolCalls(),
+                        transition.metrics().usage(),
                         failure,
                         RunStateFingerprint.calculate(updatedState)));
         PolicyDecision decision = policyEngine.evaluateOperational(
@@ -252,7 +252,7 @@ public final class ManagedRunService {
                 updated,
                 RunEventType.NODE_COMPLETED,
                 checkpoint.state().currentNode(),
-                "node execution completed");
+                nodeCompletionDetail(transition));
         appendPolicyDecision(updated);
         if (updatedState.status() == RunStatus.COMPLETED) {
             append(updated, RunEventType.RUN_COMPLETED, "terminal node reached");
@@ -476,5 +476,22 @@ public final class ManagedRunService {
     private static String policyDetail(PolicyDecision decision) {
         return decision.outcome() + ":" + decision.reasonCode()
                 + ":resumable=" + decision.resumable();
+    }
+
+    private static String nodeCompletionDetail(TransitionEvent transition) {
+        String permission = transition.statePatch().updates().entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith("tool.") && entry.getKey().endsWith(".permission"))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(null);
+        String reason = transition.statePatch().updates().entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith("tool.") && entry.getKey().endsWith(".reason"))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(null);
+        if (permission == null || reason == null) {
+            return "node execution completed";
+        }
+        return "node execution completed:toolPermission=" + permission + ":toolReason=" + reason;
     }
 }

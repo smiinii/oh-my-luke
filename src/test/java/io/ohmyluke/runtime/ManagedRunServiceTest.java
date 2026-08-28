@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ohmyluke.graph.Condition;
 import io.ohmyluke.graph.Edge;
+import io.ohmyluke.graph.ExecutionMetrics;
 import io.ohmyluke.graph.GraphDefinition;
 import io.ohmyluke.graph.GraphExecutionException;
 import io.ohmyluke.graph.FailureInfo;
@@ -121,6 +122,49 @@ class ManagedRunServiceTest {
         assertEquals(stopped, resumed);
         assertEquals(beforeRestart.policyState(), afterRestart.policyState());
         assertEquals(configuration, afterRestart.policyConfiguration());
+    }
+
+    @Test
+    void persistsToolCallsAndUsageReportedByANode() {
+        PolicyConfiguration configuration = new PolicyConfiguration(0, 0, 0, 1, 7, 0, 0);
+        ManagedRunService service = service(configuration);
+        GraphDefinition graph = oneNodeGraph(
+                context -> NodeResult.success(
+                        StatePatch.of("tool", "done"),
+                        new ExecutionMetrics(1, 7)),
+                0);
+        service.start("tool-metrics", graph, handoff());
+
+        service.resume("tool-metrics", graph);
+        RunInspection inspection = service.inspect("tool-metrics");
+
+        assertEquals(1, inspection.policyState().toolCalls());
+        assertEquals(7, inspection.policyState().usage());
+        assertEquals(PolicyOutcome.LIMIT_REACHED, inspection.policyState().lastDecision().outcome());
+        assertEquals("limit.tool-calls", inspection.policyState().lastDecision().reasonCode());
+    }
+
+    @Test
+    void recordsToolPermissionApplicationInTheDurableNodeEvent() {
+        ManagedRunService service = service();
+        GraphDefinition graph = oneNodeGraph(
+                context -> NodeResult.success(
+                        new StatePatch(Map.of(
+                                "tool.build.permission", "ALLOW",
+                                "tool.build.reason", "permission.remembered-grant")),
+                        ExecutionMetrics.oneToolCall()),
+                0);
+        service.start("tool-audit", graph, handoff());
+
+        service.resume("tool-audit", graph);
+
+        String detail = service.inspect("tool-audit").events().stream()
+                .filter(event -> event.type() == RunEventType.NODE_COMPLETED)
+                .findFirst()
+                .orElseThrow()
+                .detail();
+        assertTrue(detail.contains("toolPermission=ALLOW"));
+        assertTrue(detail.contains("toolReason=permission.remembered-grant"));
     }
 
     @Test

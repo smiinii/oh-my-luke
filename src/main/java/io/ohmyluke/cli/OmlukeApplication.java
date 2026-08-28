@@ -9,7 +9,10 @@ import io.ohmyluke.state.EventLogStore;
 import io.ohmyluke.state.HandoffStore;
 import io.ohmyluke.state.RunEventCodec;
 import io.ohmyluke.state.RunLockManager;
+import io.ohmyluke.state.ProjectPermissionManager;
+import io.ohmyluke.state.ProjectPermissionStore;
 import java.nio.file.Path;
+import java.time.Clock;
 
 /** Entry point for the Oh My Luke command-line application. */
 public final class OmlukeApplication {
@@ -25,7 +28,10 @@ public final class OmlukeApplication {
                 new EventLogStore(Path.of(""), new RunEventCodec()),
                 new HandoffStore(Path.of("")),
                 new RunLockManager(Path.of("")));
-        int exitCode = new OmlukeCli(runs, GraphResolver.none(), System.out, System.err)
+        ProjectPermissionManager permissions = new ProjectPermissionManager(
+                new ProjectPermissionStore(Path.of("")),
+                Clock.systemUTC());
+        int exitCode = new OmlukeCli(runs, GraphResolver.none(), permissions, System.out, System.err)
                 .execute(args);
         if (exitCode != 0) {
             System.exit(exitCode);

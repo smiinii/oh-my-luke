@@ -3,7 +3,7 @@ package io.ohmyluke.tool;
 import io.ohmyluke.policy.ToolCapability;
 import io.ohmyluke.policy.ToolPermission;
 import io.ohmyluke.policy.ToolPermissionDecision;
-import io.ohmyluke.policy.ToolPermissionPolicy;
+import io.ohmyluke.policy.ToolPermissionEvaluator;
 import io.ohmyluke.policy.ToolPermissionRequest;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,14 +18,14 @@ public final class FileTool {
     private static final int MAX_CONTENT_BYTES = 8 * 1024 * 1024;
 
     private final String runId;
-    private final ToolPermissionPolicy permissions;
+    private final ToolPermissionEvaluator permissions;
     private final FilePathPolicy paths;
     private final FileCheckpointStore checkpoints;
 
     public FileTool(
             Path projectRoot,
             String runId,
-            ToolPermissionPolicy permissions,
+            ToolPermissionEvaluator permissions,
             java.time.Clock clock) {
         this.runId = requireText(runId, "runId");
         this.permissions = Objects.requireNonNull(permissions, "permissions");

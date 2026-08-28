@@ -4,7 +4,7 @@ import java.time.Clock;
 import java.util.Objects;
 
 /** Evaluates hard invariants, friction-free defaults, remembered grants, and project autonomy. */
-public final class ToolPermissionPolicy {
+public final class ToolPermissionPolicy implements ToolPermissionEvaluator {
     private final PermissionGrantLedger grantLedger;
     private final boolean autonomousProject;
     private final Clock clock;
@@ -18,6 +18,7 @@ public final class ToolPermissionPolicy {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    @Override
     public ToolPermissionDecision evaluate(ToolPermissionRequest request) {
         Objects.requireNonNull(request, "request");
         return switch (request.capability().defaultPermission()) {
@@ -36,16 +37,16 @@ public final class ToolPermissionPolicy {
         if (autonomousProject) {
             return ToolPermissionDecision.allow(
                     "permission.autonomous-project",
-                    "The user enabled autonomous execution for this project",
+                    "이 프로젝트에서 사용자가 설정한 자율 실행 권한에 따라 승인 없이 실행합니다.",
                     null);
         }
         return grantLedger.consumeMatching(request, clock.millis())
                 .map(grant -> ToolPermissionDecision.allow(
                         "permission.remembered-grant",
-                        "A matching user approval was applied without prompting again",
+                        PermissionMessages.reused(request),
                         grant.grantId()))
                 .orElseGet(() -> ToolPermissionDecision.ask(
                         "permission.user-choice-required",
-                        "Choose once, current run, current project, or deny"));
+                        PermissionMessages.prompt(request)));
     }
 }

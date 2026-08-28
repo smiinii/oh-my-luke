@@ -2,7 +2,7 @@ package io.ohmyluke.tool;
 
 import io.ohmyluke.policy.ToolPermission;
 import io.ohmyluke.policy.ToolPermissionDecision;
-import io.ohmyluke.policy.ToolPermissionPolicy;
+import io.ohmyluke.policy.ToolPermissionEvaluator;
 import io.ohmyluke.policy.ToolPermissionRequest;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -35,14 +35,14 @@ public final class ProcessTool {
 
     private final Path projectRoot;
     private final String runId;
-    private final ToolPermissionPolicy permissions;
+    private final ToolPermissionEvaluator permissions;
     private final ProcessSandbox sandbox;
     private final SecretRedactor redactor = new SecretRedactor();
 
     public ProcessTool(
             Path projectRoot,
             String runId,
-            ToolPermissionPolicy permissions,
+            ToolPermissionEvaluator permissions,
             ProcessSandbox sandbox) {
         try {
             this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot").toRealPath();
