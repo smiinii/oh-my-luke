@@ -39,16 +39,17 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
             Path profile = Files.createTempFile("oml-seatbelt-", ".sb");
             Files.writeString(profile, profile(specification));
             ArrayList<String> command = new ArrayList<>();
-            command.add(SANDBOX_EXEC.toString());
-            command.add("-f");
-            command.add(profile.toString());
             // This is a fixed OML-owned wrapper, not caller-provided shell text.
             // Job control places the requested process and all of its children in
-            // one process group, which is killed even if the direct parent exits.
+            // one process group outside Seatbelt, so cleanup signals cannot be
+            // blocked by the sandboxed program's signal policy.
             command.add(SUPERVISOR_SHELL.toString());
             command.add("-c");
             command.add(SUPERVISOR);
             command.add("oml-process-supervisor");
+            command.add(SANDBOX_EXEC.toString());
+            command.add("-f");
+            command.add(profile.toString());
             command.add(specification.executable().toString());
             command.addAll(specification.arguments());
             return new SandboxLaunch(command, profile);
