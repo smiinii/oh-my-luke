@@ -1,6 +1,8 @@
 package io.ohmyluke.state;
 
 import io.ohmyluke.graph.RunState;
+import io.ohmyluke.policy.PolicyConfiguration;
+import io.ohmyluke.policy.PolicyState;
 import java.util.Objects;
 
 /** Versioned, graph-bound state persisted for one run. */
@@ -9,8 +11,10 @@ public record RunCheckpoint(
         String runId,
         String graphSignature,
         CheckpointPhase phase,
-        RunState state) {
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+        RunState state,
+        PolicyConfiguration policyConfiguration,
+        PolicyState policyState) {
+    public static final int CURRENT_SCHEMA_VERSION = 2;
 
     public RunCheckpoint {
         if (schemaVersion < 1) {
@@ -20,6 +24,8 @@ public record RunCheckpoint(
         graphSignature = requireText(graphSignature, "graphSignature");
         Objects.requireNonNull(phase, "phase");
         Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(policyConfiguration, "policyConfiguration");
+        Objects.requireNonNull(policyState, "policyState");
     }
 
     public static RunCheckpoint current(
@@ -27,7 +33,30 @@ public record RunCheckpoint(
             String graphSignature,
             CheckpointPhase phase,
             RunState state) {
-        return new RunCheckpoint(CURRENT_SCHEMA_VERSION, runId, graphSignature, phase, state);
+        return current(
+                runId,
+                graphSignature,
+                phase,
+                state,
+                PolicyConfiguration.unlimited(),
+                PolicyState.initial(0));
+    }
+
+    public static RunCheckpoint current(
+            String runId,
+            String graphSignature,
+            CheckpointPhase phase,
+            RunState state,
+            PolicyConfiguration policyConfiguration,
+            PolicyState policyState) {
+        return new RunCheckpoint(
+                CURRENT_SCHEMA_VERSION,
+                runId,
+                graphSignature,
+                phase,
+                state,
+                policyConfiguration,
+                policyState);
     }
 
     private static String requireText(String value, String name) {

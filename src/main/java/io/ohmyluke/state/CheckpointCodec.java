@@ -2,6 +2,9 @@ package io.ohmyluke.state;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.ohmyluke.policy.PolicyConfiguration;
+import io.ohmyluke.policy.PolicyState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.util.Objects;
@@ -38,6 +41,14 @@ public final class CheckpointCodec {
                 throw new CheckpointException("checkpoint schemaVersion is missing or invalid");
             }
             int version = versionNode.intValue();
+            if (version == 1) {
+                ObjectNode migrated = (ObjectNode) root.deepCopy();
+                migrated.put("schemaVersion", RunCheckpoint.CURRENT_SCHEMA_VERSION);
+                migrated.set("policyConfiguration", mapper.valueToTree(PolicyConfiguration.unlimited()));
+                migrated.set("policyState", mapper.valueToTree(PolicyState.initial(0)));
+                root = migrated;
+                version = RunCheckpoint.CURRENT_SCHEMA_VERSION;
+            }
             if (version != RunCheckpoint.CURRENT_SCHEMA_VERSION) {
                 throw new UnsupportedCheckpointVersionException(version);
             }

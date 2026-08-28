@@ -1,6 +1,8 @@
 package io.ohmyluke.runtime;
 
 import io.ohmyluke.graph.RunState;
+import io.ohmyluke.policy.PolicyConfiguration;
+import io.ohmyluke.policy.PolicyState;
 import io.ohmyluke.state.CheckpointPhase;
 import io.ohmyluke.state.RunEvent;
 import java.util.List;
@@ -12,6 +14,8 @@ public record RunInspection(
         String graphSignature,
         CheckpointPhase phase,
         RunState state,
+        PolicyConfiguration policyConfiguration,
+        PolicyState policyState,
         boolean recoveredFromBackup,
         List<RunEvent> events,
         boolean ignoredIncompleteEventTail) {
@@ -20,6 +24,8 @@ public record RunInspection(
         Objects.requireNonNull(graphSignature, "graphSignature");
         Objects.requireNonNull(phase, "phase");
         Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(policyConfiguration, "policyConfiguration");
+        Objects.requireNonNull(policyState, "policyState");
         events = List.copyOf(Objects.requireNonNull(events, "events"));
     }
 }
