@@ -2,7 +2,9 @@ package io.ohmyluke.tool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.ohmyluke.policy.PermissionGrantLedger;
 import io.ohmyluke.policy.ToolCapability;
@@ -18,7 +20,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -45,8 +46,12 @@ class MacOsSeatbeltSandboxTest {
             assertFalse(profile.contains("(subpath \"/Applications\")"));
             assertFalse(profile.contains("(subpath \"/Library\")"));
             assertFalse(profile.contains("(subpath \"/private/var\")"));
+            assertFalse(profile.contains("(subpath \"/private/var/db\")"));
+            assertFalse(profile.contains("(subpath \"/usr\")"));
             assertTrue(profile.contains("/opt/homebrew/Cellar") || !Files.exists(Path.of("/opt/homebrew/Cellar")));
-            assertTrue(profile.contains("/private/var/db") || !Files.exists(Path.of("/private/var/db")));
+            assertTrue(profile.contains("(subpath \"/usr/bin\")"));
+            assertTrue(profile.contains("(allow process-exec (literal \"/usr/bin/true\"))"));
+            assertFalse(profile.contains("(allow process*)"));
         }
     }
 
@@ -99,34 +104,59 @@ class MacOsSeatbeltSandboxTest {
         }
     }
 
-    @RepeatedTest(20)
-    void allowsBuildStyleChildrenButRemovesThemWhenTheParentExits() throws Exception {
-        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
-        ProcessToolRequest request = new ProcessToolRequest(
-                "spawn-child",
-                Path.of("/usr/bin/python3"),
-                List.of(
-                        "-c",
-                        "import subprocess; p=subprocess.Popen(['/bin/sleep','30']); print(p.pid, flush=True)"),
-                Path.of("."),
-                Map.of(),
-                Duration.ofSeconds(5),
-                4096,
-                ToolCapability.LOCAL_PROCESS,
-                "local");
+    @Test
+    void deniesChildProcessesUntilANativeMacOsJobSupervisorExists() throws Exception {
+        Path parent = Files.createDirectory(temporaryDirectory.resolve("sandbox-child"));
+        Path workspace = Files.createDirectory(parent.resolve("project"));
+        Path home = Files.createDirectory(parent.resolve("home"));
+        ProcessSandboxSpec specification = new ProcessSandboxSpec(
+                Path.of("/bin/sh"),
+                List.of("-c", "/bin/sleep 30 & child=$!; echo $child; wait $child"),
+                workspace,
+                workspace,
+                home,
+                false);
 
-        ProcessToolResult result = tool(project).execute(request);
+        try (SandboxLaunch launch = new MacOsSeatbeltSandbox().prepare(specification)) {
+            Process process = new ProcessBuilder(launch.command()).start();
+            String standardOutput = new String(process.getInputStream().readAllBytes());
+            String standardError = new String(process.getErrorStream().readAllBytes());
 
-        assertEquals(0, result.exitCode(), result.standardError());
-        assertFalse(result.timedOut());
-        assertFalse(result.standardError().contains("Done \"$@\""));
-        long childPid = Long.parseLong(result.standardOutput().trim());
-        for (int attempt = 0; attempt < 20
-                && ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false);
-                attempt++) {
-            Thread.sleep(10);
+            assertTrue(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertNotEquals(0, process.exitValue(), standardError);
+            String childPid = standardOutput.strip();
+            if (childPid.matches("\\d+")) {
+                assertFalse(ProcessHandle.of(Long.parseLong(childPid)).map(ProcessHandle::isAlive).orElse(false));
+            }
         }
-        assertFalse(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false));
+    }
+
+    @Test
+    void deniesNetworkCapableChildProcessesEvenWhenTheInitialExecutionHasNetworkPermission() throws Exception {
+        Path parent = Files.createDirectory(temporaryDirectory.resolve("sandbox-network-child"));
+        Path workspace = Files.createDirectory(parent.resolve("project"));
+        Path home = Files.createDirectory(parent.resolve("home"));
+        try (ServerSocket server = new ServerSocket(0)) {
+            ProcessSandboxSpec specification = new ProcessSandboxSpec(
+                    Path.of("/bin/sh"),
+                    List.of(
+                            "-c",
+                            "/usr/bin/curl --max-time 1 http://127.0.0.1:" + server.getLocalPort()),
+                    workspace,
+                    workspace,
+                    home,
+                    true);
+
+            try (SandboxLaunch launch = new MacOsSeatbeltSandbox().prepare(specification)) {
+                Process process = new ProcessBuilder(launch.command()).start();
+                String standardError = new String(process.getErrorStream().readAllBytes());
+
+                assertTrue(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS));
+                assertNotEquals(0, process.exitValue(), standardError);
+                server.setSoTimeout(100);
+                assertThrows(java.net.SocketTimeoutException.class, server::accept);
+            }
+        }
     }
 
     @Test

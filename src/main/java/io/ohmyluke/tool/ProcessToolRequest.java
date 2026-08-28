@@ -33,9 +33,11 @@ public record ProcessToolRequest(
             ToolCapability.SECRET_DISCLOSURE,
             ToolCapability.PROTECTED_SYSTEM_DAMAGE);
     private static final Pattern SENSITIVE_ARGUMENT_FLAG = Pattern.compile(
-            "(?i)^--?[a-z0-9_-]*(?:token|secret|password|passwd|api[-_]?key|authorization|auth|cookie|credential|private[-_]?key)(?:[=_-].*)?$");
+            "(?i)^--?[a-z0-9_-]*(?:token|secret|password|passwd|api[-_]?key|authorization|credential|private[-_]?key)(?:=.*)?$");
     private static final Pattern SENSITIVE_HEADER = Pattern.compile(
-            "(?i)^[a-z0-9-]*(?:api-?key|authorization|auth-token|cookie|client-secret)\\s*:");
+            "(?i)^[a-z0-9_-]*(?:api[-_]?key|authorization|auth[-_]?token|cookie|client[-_]?secret)\\s*:");
+    private static final Set<String> CREDENTIAL_OPTIONS = Set.of(
+            "-u", "--user", "--proxy-user", "--cookie");
     private static final Pattern CREDENTIAL_PARAMETER = Pattern.compile(
             "(?i)(?:^|[?&;,\\s])(?:api[_-]?key|token|secret|password|passwd|authorization|auth|cookie|credential)\\s*=");
     private static final List<Pattern> SECRET_VALUES = List.of(
@@ -55,7 +57,9 @@ public record ProcessToolRequest(
         for (int index = 0; index < arguments.size(); index++) {
             String argument = arguments.get(index);
             validateNul(argument, "argument");
-            if (SENSITIVE_ARGUMENT_FLAG.matcher(argument).matches()
+            String option = argument.contains("=") ? argument.substring(0, argument.indexOf('=')) : argument;
+            if (CREDENTIAL_OPTIONS.contains(option.toLowerCase(java.util.Locale.ROOT))
+                    || SENSITIVE_ARGUMENT_FLAG.matcher(argument).matches()
                     || SENSITIVE_HEADER.matcher(argument).find()
                     || containsSecretValue(argument)
                     || containsCredentialSyntax(argument)) {

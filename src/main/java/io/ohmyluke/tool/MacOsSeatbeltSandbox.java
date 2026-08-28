@@ -9,17 +9,6 @@ import java.util.List;
 /** macOS Seatbelt launcher with a deny-by-default filesystem and network profile. */
 public final class MacOsSeatbeltSandbox implements ProcessSandbox {
     private static final Path SANDBOX_EXEC = Path.of("/usr/bin/sandbox-exec");
-    private static final Path SUPERVISOR_SHELL = Path.of("/bin/sh");
-    private static final String SUPERVISOR = String.join(
-            " ",
-            "exec 3>&2 2>/dev/null;",
-            "set -m;",
-            "\"$@\" 2>&3 & oml_pid=$!;",
-            "trap 'kill -KILL -$oml_pid 2>/dev/null' EXIT INT TERM HUP;",
-            "wait $oml_pid; oml_status=$?;",
-            "kill -KILL -$oml_pid 2>/dev/null;",
-            "trap - EXIT;",
-            "exit $oml_status");
 
     @Override
     public boolean available() {
@@ -40,14 +29,6 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
             Path profile = Files.createTempFile("oml-seatbelt-", ".sb");
             Files.writeString(profile, profile(specification));
             ArrayList<String> command = new ArrayList<>();
-            // This is a fixed OML-owned wrapper, not caller-provided shell text.
-            // Job control places the requested process and all of its children in
-            // one process group outside Seatbelt, so cleanup signals cannot be
-            // blocked by the sandboxed program's signal policy.
-            command.add(SUPERVISOR_SHELL.toString());
-            command.add("-c");
-            command.add(SUPERVISOR);
-            command.add("oml-process-supervisor");
             command.add(SANDBOX_EXEC.toString());
             command.add("-f");
             command.add(profile.toString());
@@ -66,11 +47,10 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
         StringBuilder profile = new StringBuilder();
         profile.append("(version 1)\n");
         profile.append("(deny default)\n");
-        if (specification.networkAllowed()) {
-            profile.append("(allow process-exec (literal \"").append(executable).append("\"))\n");
-        } else {
-            profile.append("(allow process*)\n");
-        }
+        // Seatbelt has no job object or PID namespace. Until a native supervisor
+        // exists, only the exact initial executable is allowed to prevent daemon
+        // and setsid descendants from outliving OML.
+        profile.append("(allow process-exec (literal \"").append(executable).append("\"))\n");
         profile.append("(allow signal (target self))\n");
         profile.append("(allow sysctl-read)\n");
         profile.append("(allow mach-lookup)\n");
@@ -84,7 +64,7 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
                     .append(escape(runtimeLink))
                     .append("\"))\n");
         }
-        for (String runtimeRoot : runtimeRoots()) {
+        for (String runtimeRoot : runtimeRoots(specification.executable())) {
             if (Files.exists(Path.of(runtimeRoot))) {
                 profile.append("(allow file-read* (subpath \"")
                         .append(escape(runtimeRoot))
@@ -98,11 +78,9 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
                 "/opt/homebrew/var",
                 "/usr/local/etc",
                 "/usr/local/var")) {
-            if (Files.exists(Path.of(deniedRuntimeData))) {
-                profile.append("(deny file-read* (subpath \"")
-                        .append(escape(deniedRuntimeData))
-                        .append("\"))\n");
-            }
+            profile.append("(deny file-read* (subpath \"")
+                    .append(escape(deniedRuntimeData))
+                    .append("\"))\n");
         }
         profile.append("(allow file-read* (literal \"").append(executable).append("\"))\n");
         profile.append("(allow file-read* (subpath \"").append(workspace).append("\"))\n");
@@ -116,33 +94,51 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
         return profile.toString();
     }
 
-    private static List<String> runtimeRoots() {
+    private static List<String> runtimeRoots(Path executable) {
         ArrayList<String> roots = new ArrayList<>(List.of(
                 "/System",
-                "/usr",
+                "/usr/bin",
+                "/usr/lib",
+                "/usr/libexec",
+                "/usr/sbin",
+                "/usr/share",
                 "/bin",
                 "/sbin",
                 "/Library/Developer",
                 "/Library/Java/JavaVirtualMachines",
-                "/private/etc",
-                "/private/var/db",
-                "/private/var/run",
+                "/private/etc/hosts",
+                "/private/etc/passwd",
+                "/private/etc/protocols",
+                "/private/etc/resolv.conf",
+                "/private/etc/services",
+                "/private/etc/ssl",
+                "/private/var/db/dyld",
+                "/private/var/db/timezone",
                 "/private/var/select",
-                "/private/preboot",
                 "/dev",
-                "/opt/homebrew/Cellar"));
-        Path applications = Path.of("/Applications");
-        if (Files.isDirectory(applications)) {
-            try (var entries = Files.list(applications)) {
-                entries.filter(Files::isDirectory)
-                        .filter(path -> path.getFileName().toString().startsWith("Xcode"))
-                        .map(path -> path.resolve("Contents/Developer"))
-                        .filter(Files::isDirectory)
-                        .map(Path::toString)
-                        .forEach(roots::add);
-            } catch (IOException ignored) {
-                // Missing optional developer roots must never widen the profile.
+                "/opt/homebrew/Cellar",
+                "/usr/local/Cellar"));
+        try {
+            Path realExecutable = executable.toRealPath();
+            Path current = realExecutable.getParent();
+            while (current != null) {
+                String name = current.getFileName() == null ? "" : current.getFileName().toString();
+                if (name.equals("Home") && current.getParent() != null
+                        && current.getParent().getFileName() != null
+                        && current.getParent().getFileName().toString().equals("Contents")) {
+                    roots.add(current.toString());
+                    break;
+                }
+                if (name.equals("Contents") && current.getParent() != null
+                        && current.getParent().getFileName() != null
+                        && current.getParent().getFileName().toString().endsWith(".app")) {
+                    roots.add(current.toString());
+                    break;
+                }
+                current = current.getParent();
             }
+        } catch (IOException ignored) {
+            // The caller already resolves executables; any later change fails closed.
         }
         return List.copyOf(roots);
     }

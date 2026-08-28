@@ -162,6 +162,33 @@ class ProcessToolTest {
                         1024,
                         ToolCapability.NETWORK_ACCESS,
                         "network:any"));
+        for (List<String> credentialArguments : List.of(
+                List.of("-u", "alice:hunter2"),
+                List.of("--proxy-user", "alice:hunter2"),
+                List.of("-H", "X_API_KEY: opaque-secret-value"))) {
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new ProcessToolRequest(
+                            "credential-option",
+                            Path.of("/usr/bin/curl"),
+                            credentialArguments,
+                            Path.of("."),
+                            Map.of(),
+                            Duration.ofSeconds(5),
+                            1024,
+                            ToolCapability.NETWORK_ACCESS,
+                            "network:any"));
+        }
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> new ProcessToolRequest(
+                "safe-auth-options",
+                Path.of("/usr/bin/curl"),
+                List.of("--cookie-jar", "cookies.out", "--no-auth-cache", "https://example.com"),
+                Path.of("."),
+                Map.of(),
+                Duration.ofSeconds(5),
+                1024,
+                ToolCapability.NETWORK_ACCESS,
+                "network:any"));
         org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalArgumentException.class,
                 () -> new ProcessToolRequest(
@@ -207,6 +234,7 @@ class ProcessToolTest {
 
         ProcessToolResult secret = tool.execute(javaRequest(project, "secret"));
         ProcessToolResult opaque = tool.execute(javaRequest(project, "opaque-secrets"));
+        ProcessToolResult authVariants = tool.execute(javaRequest(project, "auth-variants"));
         ProcessToolResult partial = tool.execute(javaRequest(project, "secret").withOutputLimit(10));
         ProcessToolResult large = tool.execute(javaRequest(project, "large", "4096").withOutputLimit(128));
 
@@ -214,6 +242,9 @@ class ProcessToolTest {
         assertTrue(secret.standardOutput().contains("[REDACTED]"));
         assertFalse(opaque.standardOutput().contains("AKIA"));
         assertFalse(opaque.standardOutput().contains("opaque-secret"));
+        assertFalse(authVariants.standardOutput().contains("dXNlcjpwYXNz"));
+        assertFalse(authVariants.standardOutput().contains("opaque-credential"));
+        assertFalse(authVariants.standardOutput().contains("opaque-cookie"));
         assertFalse(partial.standardOutput().contains("ghp_"));
         assertTrue(partial.standardOutput().contains("[REDACTED]"));
         assertEquals(128, large.standardOutput().length());
