@@ -84,21 +84,7 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
                     .append(escape(runtimeLink))
                     .append("\"))\n");
         }
-        for (String runtimeRoot : List.of(
-                "/System",
-                "/usr",
-                "/bin",
-                "/sbin",
-                "/Library/Developer",
-                "/Library/Java/JavaVirtualMachines",
-                "/private/etc",
-                "/private/var/db",
-                "/private/var/run",
-                "/private/var/select",
-                "/private/preboot",
-                "/dev",
-                "/Applications/Xcode.app/Contents/Developer",
-                "/opt/homebrew/Cellar")) {
+        for (String runtimeRoot : runtimeRoots()) {
             if (Files.exists(Path.of(runtimeRoot))) {
                 profile.append("(allow file-read* (subpath \"")
                         .append(escape(runtimeRoot))
@@ -128,6 +114,37 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
             profile.append("(allow network*)\n");
         }
         return profile.toString();
+    }
+
+    private static List<String> runtimeRoots() {
+        ArrayList<String> roots = new ArrayList<>(List.of(
+                "/System",
+                "/usr",
+                "/bin",
+                "/sbin",
+                "/Library/Developer",
+                "/Library/Java/JavaVirtualMachines",
+                "/private/etc",
+                "/private/var/db",
+                "/private/var/run",
+                "/private/var/select",
+                "/private/preboot",
+                "/dev",
+                "/opt/homebrew/Cellar"));
+        Path applications = Path.of("/Applications");
+        if (Files.isDirectory(applications)) {
+            try (var entries = Files.list(applications)) {
+                entries.filter(Files::isDirectory)
+                        .filter(path -> path.getFileName().toString().startsWith("Xcode"))
+                        .map(path -> path.resolve("Contents/Developer"))
+                        .filter(Files::isDirectory)
+                        .map(Path::toString)
+                        .forEach(roots::add);
+            } catch (IOException ignored) {
+                // Missing optional developer roots must never widen the profile.
+            }
+        }
+        return List.copyOf(roots);
     }
 
     private static String quote(Path path) {
