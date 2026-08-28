@@ -238,6 +238,9 @@ class ProcessToolTest {
         ProcessToolResult opaque = tool.execute(javaRequest(project, "opaque-secrets"));
         ProcessToolResult authVariants = tool.execute(javaRequest(project, "auth-variants"));
         ProcessToolResult partialJson = tool.execute(javaRequest(project, "json-secret").withOutputLimit(24));
+        ProcessToolResult jsonEdges = tool.execute(javaRequest(project, "json-edge-secrets"));
+        ProcessToolResult partialJsonEdges =
+                tool.execute(javaRequest(project, "json-edge-secrets").withOutputLimit(31));
         ProcessToolResult partial = tool.execute(javaRequest(project, "secret").withOutputLimit(10));
         ProcessToolResult large = tool.execute(javaRequest(project, "large", "4096").withOutputLimit(128));
 
@@ -257,6 +260,10 @@ class ProcessToolTest {
         assertFalse(authVariants.standardOutput().contains("opaque-json-auth"));
         assertFalse(partialJson.standardOutput().contains("opaque"));
         assertTrue(partialJson.standardOutput().contains("[REDACTED]"));
+        assertFalse(jsonEdges.standardOutput().contains("opaque-after-escape"));
+        assertFalse(jsonEdges.standardOutput().contains("123456"));
+        assertTrue(jsonEdges.standardOutput().contains("\"safe\":true"));
+        assertFalse(partialJsonEdges.standardOutput().contains("opaque"));
         assertFalse(partial.standardOutput().contains("ghp_"));
         assertTrue(partial.standardOutput().contains("[REDACTED]"));
         assertEquals(128, large.standardOutput().length());

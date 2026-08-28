@@ -24,6 +24,8 @@ public final class ProcessToolFixture {
                             + "acceptCookie=false\n"
                             + "{\"Cookie\":\"opaque-json-cookie\",\"Authorization\":\"Bearer opaque-json-auth\"}\n");
             case "json-secret" -> System.out.print("{\"Cookie\":\"opaque-json-cookie-value\"}");
+            case "json-edge-secrets" -> System.out.print(
+                    "{\"token\":\"prefix\\\\\\\"opaque-after-escape\",\"password\":123456,\"safe\":true}");
             case "large" -> System.out.print("x".repeat(Integer.parseInt(arguments[1])));
             case "sleep" -> Thread.sleep(Long.parseLong(arguments[1]));
             case "spawn" -> {
