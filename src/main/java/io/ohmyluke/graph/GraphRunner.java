@@ -19,9 +19,47 @@ public final class GraphRunner {
     }
 
     public RunState run(GraphDefinition graph, Map<String, String> initialValues) {
+        return resume(graph, start(graph, initialValues));
+    }
+
+    public RunState start(GraphDefinition graph) {
+        return start(graph, Map.of());
+    }
+
+    public RunState start(GraphDefinition graph, Map<String, String> initialValues) {
         Objects.requireNonNull(graph, "graph");
         Objects.requireNonNull(initialValues, "initialValues");
         validator.validate(graph);
+
+        NodeId current = graph.start();
+        RunStatus status = graph.terminalNodes().contains(current)
+                ? RunStatus.COMPLETED
+                : RunStatus.RUNNING;
+        return snapshot(
+                status,
+                current,
+                0,
+                immutableState(initialValues),
+                List.of(current),
+                List.of());
+    }
+
+    public RunState resume(GraphDefinition graph, RunState state) {
+        Objects.requireNonNull(state, "state");
+        RunState current = state;
+        while (current.status() == RunStatus.RUNNING) {
+            current = step(graph, current);
+        }
+        return current;
+    }
+
+    public RunState step(GraphDefinition graph, RunState state) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(state, "state");
+        validator.validate(graph);
+        if (state.status() != RunStatus.RUNNING) {
+            return state;
+        }
 
         Map<NodeId, Node> nodesById = new LinkedHashMap<>();
         graph.nodes().forEach(node -> nodesById.put(node.id(), node));
@@ -30,58 +68,55 @@ public final class GraphRunner {
                 .computeIfAbsent(edge.from(), ignored -> new ArrayList<>())
                 .add(edge));
 
-        NodeId current = graph.start();
-        int executedSteps = 0;
-        Map<String, String> values = immutableState(initialValues);
-        List<NodeId> path = new ArrayList<>();
-        List<TransitionEvent> events = new ArrayList<>();
-        path.add(current);
+        if (graph.maxSteps() > 0 && state.executedSteps() >= graph.maxSteps()) {
+            return snapshot(
+                    RunStatus.STEP_LIMIT_REACHED,
+                    state.currentNode(),
+                    state.executedSteps(),
+                    state.values(),
+                    state.path(),
+                    state.events());
+        }
 
+        NodeId current = state.currentNode();
+        Node node = nodesById.get(current);
+        if (node == null) {
+            throw new GraphExecutionException("no executable node found for " + current);
+        }
+
+        NodeResult result = execute(node, new NodeContext(state.values(), state.executedSteps()));
+        Map<String, String> stateAfter = apply(state.values(), result.statePatch());
+        Edge selected = selectSingleEdge(
+                current,
+                outgoingEdges.getOrDefault(current, List.of()),
+                result,
+                stateAfter);
+
+        int executedSteps = state.executedSteps() + 1;
+        List<TransitionEvent> events = new ArrayList<>(state.events());
+        events.add(new TransitionEvent(
+                executedSteps,
+                current,
+                result.outcome(),
+                selected.to(),
+                selected.condition().description(),
+                result.statePatch(),
+                stateAfter));
+        List<NodeId> path = new ArrayList<>(state.path());
+        path.add(selected.to());
+
+        RunStatus status = nextStatus(graph, selected.to(), executedSteps);
+        return snapshot(status, selected.to(), executedSteps, stateAfter, path, events);
+    }
+
+    private static RunStatus nextStatus(GraphDefinition graph, NodeId current, int executedSteps) {
         if (graph.terminalNodes().contains(current)) {
-            return snapshot(RunStatus.COMPLETED, current, executedSteps, values, path, events);
+            return RunStatus.COMPLETED;
         }
-
-        while (true) {
-            if (graph.maxSteps() > 0 && executedSteps >= graph.maxSteps()) {
-                return snapshot(
-                        RunStatus.STEP_LIMIT_REACHED,
-                        current,
-                        executedSteps,
-                        values,
-                        path,
-                        events);
-            }
-
-            Node node = nodesById.get(current);
-            if (node == null) {
-                throw new GraphExecutionException("no executable node found for " + current);
-            }
-
-            NodeResult result = execute(node, new NodeContext(values, executedSteps));
-            Map<String, String> stateAfter = apply(values, result.statePatch());
-            Edge selected = selectSingleEdge(
-                    current,
-                    outgoingEdges.getOrDefault(current, List.of()),
-                    result,
-                    stateAfter);
-
-            executedSteps++;
-            events.add(new TransitionEvent(
-                    executedSteps,
-                    current,
-                    result.outcome(),
-                    selected.to(),
-                    selected.condition().description(),
-                    result.statePatch(),
-                    stateAfter));
-            values = stateAfter;
-            current = selected.to();
-            path.add(current);
-
-            if (graph.terminalNodes().contains(current)) {
-                return snapshot(RunStatus.COMPLETED, current, executedSteps, values, path, events);
-            }
+        if (graph.maxSteps() > 0 && executedSteps >= graph.maxSteps()) {
+            return RunStatus.STEP_LIMIT_REACHED;
         }
+        return RunStatus.RUNNING;
     }
 
     private static NodeResult execute(Node node, NodeContext context) {
