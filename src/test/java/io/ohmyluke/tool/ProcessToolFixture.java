@@ -17,7 +17,9 @@ public final class ProcessToolFixture {
                     "Authorization: Basic dXNlcjpwYXNz\n"
                             + "Proxy-Authorization: Digest opaque-credential\n"
                             + "Cookie: session=opaque-request-credential\n"
-                            + "Set-Cookie: session=opaque-cookie\n");
+                            + "Set-Cookie: session=opaque-cookie\n"
+                            + "Cookie=session=opaque-equals-cookie\n"
+                            + "Set-Cookie=session=opaque-equals-set-cookie\n");
             case "large" -> System.out.print("x".repeat(Integer.parseInt(arguments[1])));
             case "sleep" -> Thread.sleep(Long.parseLong(arguments[1]));
             case "spawn" -> {

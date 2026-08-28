@@ -248,6 +248,8 @@ class ProcessToolTest {
         assertFalse(authVariants.standardOutput().contains("opaque-credential"));
         assertFalse(authVariants.standardOutput().contains("opaque-request-credential"));
         assertFalse(authVariants.standardOutput().contains("opaque-cookie"));
+        assertFalse(authVariants.standardOutput().contains("opaque-equals-cookie"));
+        assertFalse(authVariants.standardOutput().contains("opaque-equals-set-cookie"));
         assertFalse(partial.standardOutput().contains("ghp_"));
         assertTrue(partial.standardOutput().contains("[REDACTED]"));
         assertEquals(128, large.standardOutput().length());
