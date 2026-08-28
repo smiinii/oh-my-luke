@@ -91,7 +91,7 @@ public final class EventLogStore {
         } catch (UnsupportedCheckpointVersionException error) {
             throw error;
         } catch (CheckpointException error) {
-            RunFileSupport.writeDurably(path, Arrays.copyOf(content, lastNewline + 1));
+            RunFileSupport.writeAtomically(path, Arrays.copyOf(content, lastNewline + 1));
             return "";
         }
     }

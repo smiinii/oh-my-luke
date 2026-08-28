@@ -41,6 +41,10 @@ final class RunFileSupport {
     }
 
     static void writeAtomically(Path target, String content) {
+        writeAtomically(target, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    static void writeAtomically(Path target, byte[] content) {
         Path temporary = null;
         try {
             Files.createDirectories(target.getParent());

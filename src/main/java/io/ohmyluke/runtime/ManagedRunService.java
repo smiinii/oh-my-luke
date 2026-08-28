@@ -19,6 +19,7 @@ import io.ohmyluke.state.RunEvent;
 import io.ohmyluke.state.RunEventType;
 import io.ohmyluke.state.RunLockManager;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Objects;
 
@@ -77,7 +78,7 @@ public final class ManagedRunService {
         try (RunLockManager.RunLease ignored = locks.acquire(runId)) {
             RunCheckpoint checkpoint = loadForAction(runId);
             verifyGraph(checkpoint, graph);
-            return advance(graph, checkpoint).state();
+            return advance(runner.prepare(graph), checkpoint).state();
         }
     }
 
@@ -88,10 +89,11 @@ public final class ManagedRunService {
             if (checkpoint.state().status() != RunStatus.RUNNING) {
                 return checkpoint.state();
             }
+            GraphRunner.PreparedGraph prepared = runner.prepare(graph);
             append(checkpoint, RunEventType.RUN_RESUMED, resumeDetail(checkpoint));
             RunCheckpoint current = checkpoint;
             while (current.state().status() == RunStatus.RUNNING) {
-                current = advance(graph, current);
+                current = advance(prepared, current);
             }
             return current.state();
         }
@@ -115,17 +117,20 @@ public final class ManagedRunService {
         CheckpointLoadResult loaded = checkpoints.load(runId);
         EventLogReadResult events = eventLog.readAll(runId);
         RunCheckpoint checkpoint = reconcileCancellation(loaded.checkpoint(), events.events());
+        List<RunEvent> completeEventView = completedEventView(checkpoint, events.events());
         return new RunInspection(
                 checkpoint.runId(),
                 checkpoint.graphSignature(),
                 checkpoint.phase(),
                 checkpoint.state(),
                 loaded.recoveredFromBackup(),
-                events.events(),
+                completeEventView,
                 events.ignoredIncompleteTail());
     }
 
-    private RunCheckpoint advance(GraphDefinition graph, RunCheckpoint checkpoint) {
+    private RunCheckpoint advance(
+            GraphRunner.PreparedGraph prepared,
+            RunCheckpoint checkpoint) {
         if (checkpoint.state().status() != RunStatus.RUNNING) {
             return checkpoint;
         }
@@ -137,7 +142,7 @@ public final class ManagedRunService {
         checkpoints.save(started);
         append(started, RunEventType.NODE_STARTED, "node execution started");
 
-        RunState updatedState = runner.step(graph, checkpoint.state());
+        RunState updatedState = runner.step(prepared, checkpoint.state());
         RunCheckpoint updated = RunCheckpoint.current(
                 checkpoint.runId(),
                 checkpoint.graphSignature(),
@@ -200,8 +205,19 @@ public final class ManagedRunService {
 
     private void reconcileCompletedEvents(RunCheckpoint checkpoint) {
         List<RunEvent> durableEvents = eventLog.readAll(checkpoint.runId()).events();
+        List<RunEvent> completeEvents = completedEventView(checkpoint, durableEvents);
+        for (int index = durableEvents.size(); index < completeEvents.size(); index++) {
+            eventLog.append(completeEvents.get(index));
+        }
+    }
+
+    private List<RunEvent> completedEventView(
+            RunCheckpoint checkpoint,
+            List<RunEvent> durableEvents) {
+        List<RunEvent> completeEvents = new ArrayList<>(durableEvents);
+        long sequence = completeEvents.isEmpty() ? 1 : completeEvents.getLast().sequence() + 1;
         for (TransitionEvent transition : checkpoint.state().events()) {
-            boolean recorded = durableEvents.stream().anyMatch(event ->
+            boolean recorded = completeEvents.stream().anyMatch(event ->
                     event.type() == RunEventType.NODE_COMPLETED
                             && event.executedSteps() == transition.step()
                             && event.node().equals(transition.node()));
@@ -209,23 +225,33 @@ public final class ManagedRunService {
                 RunStatus status = transition.step() == checkpoint.state().executedSteps()
                         ? checkpoint.state().status()
                         : RunStatus.RUNNING;
-                append(
+                completeEvents.add(RunEvent.current(
                         checkpoint.runId(),
+                        sequence++,
                         RunEventType.NODE_COMPLETED,
                         transition.node(),
                         status,
                         transition.step(),
-                        "node completion recovered from checkpoint");
+                        "node completion recovered from checkpoint"));
             }
         }
         if (checkpoint.state().status() == RunStatus.COMPLETED) {
-            boolean completionRecorded = durableEvents.stream().anyMatch(event ->
+            boolean completionRecorded = completeEvents.stream().anyMatch(event ->
                     event.type() == RunEventType.RUN_COMPLETED
                             && event.executedSteps() == checkpoint.state().executedSteps());
             if (!completionRecorded) {
-                append(checkpoint, RunEventType.RUN_COMPLETED, "run completion recovered from checkpoint");
+                RunState state = checkpoint.state();
+                completeEvents.add(RunEvent.current(
+                        checkpoint.runId(),
+                        sequence,
+                        RunEventType.RUN_COMPLETED,
+                        state.currentNode(),
+                        state.status(),
+                        state.executedSteps(),
+                        "run completion recovered from checkpoint"));
             }
         }
+        return List.copyOf(completeEvents);
     }
 
     private void verifyGraph(RunCheckpoint checkpoint, GraphDefinition graph) {

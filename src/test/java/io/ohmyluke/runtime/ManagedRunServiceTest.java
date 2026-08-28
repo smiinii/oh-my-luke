@@ -242,6 +242,14 @@ class ManagedRunServiceTest {
                 CheckpointPhase.READY,
                 completed));
 
+        List<RunEventType> inspectionTypes = service.inspect("run-001").events().stream()
+                .map(event -> event.type())
+                .toList();
+        assertTrue(inspectionTypes.contains(RunEventType.NODE_COMPLETED));
+        assertTrue(inspectionTypes.contains(RunEventType.RUN_COMPLETED));
+        assertFalse(events.readAll("run-001").events().stream()
+                .anyMatch(event -> event.type() == RunEventType.RUN_COMPLETED));
+
         RunState resumed = service.resume("run-001", graph);
         List<RunEventType> eventTypes = events.readAll("run-001").events().stream()
                 .map(event -> event.type())

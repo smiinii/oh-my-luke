@@ -217,8 +217,34 @@ class GraphRunnerTest {
 
     @Test
     void longResumeDoesNotCopyTheEntireHistoryAtEveryStep() {
+        GraphDefinition graph = longLoopGraph();
+
+        RunState result = assertTimeout(Duration.ofSeconds(5), () -> runner.run(graph));
+
+        assertEquals(RunStatus.STEP_LIMIT_REACHED, result.status());
+        assertEquals(10_000, result.executedSteps());
+    }
+
+    @Test
+    void preparedStepExecutionDoesNotRevalidateOrCopyHistoryAtEveryStep() {
+        GraphDefinition graph = longLoopGraph();
+
+        RunState result = assertTimeout(Duration.ofSeconds(5), () -> {
+            GraphRunner.PreparedGraph prepared = runner.prepare(graph);
+            RunState current = runner.start(graph);
+            while (current.status() == RunStatus.RUNNING) {
+                current = runner.step(prepared, current);
+            }
+            return current;
+        });
+
+        assertEquals(RunStatus.STEP_LIMIT_REACHED, result.status());
+        assertEquals(10_000, result.executedSteps());
+    }
+
+    private static GraphDefinition longLoopGraph() {
         Node loop = node("loop", context -> NodeResult.success());
-        GraphDefinition graph = new GraphDefinition(
+        return new GraphDefinition(
                 loop.id(),
                 Set.of(loop),
                 List.of(
@@ -228,11 +254,6 @@ class GraphRunnerTest {
                         new Edge(loop.id(), END, Condition.outcomeIs(Outcome.CANCELLED))),
                 Set.of(END),
                 10_000);
-
-        RunState result = assertTimeout(Duration.ofSeconds(5), () -> runner.run(graph));
-
-        assertEquals(RunStatus.STEP_LIMIT_REACHED, result.status());
-        assertEquals(10_000, result.executedSteps());
     }
 
     private static GraphDefinition retryUntilSecondAttemptGraph(int maxSteps) {
