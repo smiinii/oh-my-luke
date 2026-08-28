@@ -43,7 +43,7 @@ public final class CompletionEvaluator {
         if (condition instanceof CompletionCondition.CommandExitCode command) {
             Integer actual = facts.commandExitCodes().get(command.command());
             return new ConditionEvidence(
-                    "command-exit-code:" + command.command().display(),
+                    "command-exit-code:sha256:" + command.command().canonicalId(),
                     actual != null && actual == command.expected(),
                     Integer.toString(command.expected()),
                     actual == null ? "missing" : actual.toString());

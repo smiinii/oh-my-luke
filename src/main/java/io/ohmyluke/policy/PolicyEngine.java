@@ -20,6 +20,13 @@ public final class PolicyEngine {
         if (limit.outcome() != PolicyOutcome.CONTINUE) {
             return limit;
         }
+        if (capacityReached(state)) {
+            return new PolicyDecision(
+                    PolicyOutcome.BLOCKED,
+                    "counter.capacity-reached",
+                    "a persisted policy counter reached its numeric storage capacity",
+                    false);
+        }
         PolicyDecision stagnation = new StagnationPolicy(
                         configuration.maxRepeatedFailures(),
                         configuration.maxNoProgress())
@@ -42,5 +49,14 @@ public final class PolicyEngine {
             return completion;
         }
         return evaluateOperational(configuration, state);
+    }
+
+    private static boolean capacityReached(PolicyState state) {
+        return state.iterations() == Long.MAX_VALUE
+                || state.nodeCalls() == Long.MAX_VALUE
+                || state.toolCalls() == Long.MAX_VALUE
+                || state.usage() == Long.MAX_VALUE
+                || state.repeatedFailureCount() == Integer.MAX_VALUE
+                || state.noProgressCount() == Integer.MAX_VALUE;
     }
 }

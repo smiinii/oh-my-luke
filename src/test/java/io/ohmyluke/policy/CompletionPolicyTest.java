@@ -54,4 +54,17 @@ class CompletionPolicyTest {
                 IllegalArgumentException.class,
                 () -> new CompletionCondition.Any(List.of()));
     }
+
+    @Test
+    void decisionRejectsContradictoryResumeMetadata() {
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new PolicyDecision(PolicyOutcome.SUCCESS, "completion.satisfied", "done", true));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new PolicyDecision(PolicyOutcome.CANCELLED, "run.cancelled", "cancelled", true));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new PolicyDecision(PolicyOutcome.CONTINUE, "policy.continue", "continue", false));
+    }
 }

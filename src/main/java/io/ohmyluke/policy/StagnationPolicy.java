@@ -22,14 +22,14 @@ public final class StagnationPolicy {
                     PolicyOutcome.BLOCKED,
                     "failure.repeated",
                     "same normalized failure repeated " + state.repeatedFailureCount() + " times",
-                    true);
+                    false);
         }
         if (maxNoProgress > 0 && state.noProgressCount() >= maxNoProgress) {
             return new PolicyDecision(
                     PolicyOutcome.BLOCKED,
                     "progress.stalled",
                     "state fingerprint did not change for " + state.noProgressCount() + " observations",
-                    true);
+                    false);
         }
         return PolicyDecision.continueExecution(
                 "progress.detected",

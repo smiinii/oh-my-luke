@@ -24,6 +24,7 @@ import io.ohmyluke.policy.CompletionFacts;
 import io.ohmyluke.policy.PolicyConfiguration;
 import io.ohmyluke.policy.PolicyDecision;
 import io.ohmyluke.policy.PolicyOutcome;
+import io.ohmyluke.policy.PolicyState;
 import io.ohmyluke.state.CheckpointCodec;
 import io.ohmyluke.state.CheckpointException;
 import io.ohmyluke.state.CheckpointPhase;
@@ -113,6 +114,7 @@ class ManagedRunServiceTest {
         assertEquals(2, stopped.executedSteps());
         assertEquals(PolicyOutcome.LIMIT_REACHED, beforeRestart.policyState().lastDecision().outcome());
         assertEquals("limit.iterations", beforeRestart.policyState().lastDecision().reasonCode());
+        assertFalse(beforeRestart.policyState().lastDecision().resumable());
         assertEquals(2, beforeRestart.policyState().iterations());
         assertEquals(2, beforeRestart.policyState().nodeCalls());
         assertEquals(stopped, resumed);
@@ -134,10 +136,16 @@ class ManagedRunServiceTest {
                 "objective-run",
                 new CompletionCondition.FileExists("artifact.txt"),
                 new CompletionFacts(Map.of(), Set.of("artifact.txt"), 0, Set.of()));
+        PolicyDecision repeatedWithMissingFacts = service.evaluateCompletion(
+                "objective-run",
+                new CompletionCondition.FileExists("artifact.txt"),
+                new CompletionFacts(Map.of(), Set.of(), 0, Set.of()));
+        service.cancel("objective-run");
         RunState resumed = service.resume("objective-run", graph);
         RunInspection inspection = service.inspect("objective-run");
 
         assertEquals(PolicyOutcome.SUCCESS, decision.outcome());
+        assertEquals(PolicyOutcome.SUCCESS, repeatedWithMissingFacts.outcome());
         assertEquals(0, executions.get());
         assertEquals(RunStatus.RUNNING, resumed.status());
         assertEquals(PolicyOutcome.SUCCESS, inspection.policyState().lastDecision().outcome());
@@ -182,6 +190,28 @@ class ManagedRunServiceTest {
     }
 
     @Test
+    void failedAttemptConsumesNodeCallBudgetBeforeItCanBeRetried() {
+        AtomicInteger attempts = new AtomicInteger();
+        GraphDefinition graph = oneNodeGraph(context -> {
+            attempts.incrementAndGet();
+            throw new IllegalStateException("always crashes");
+        }, 0);
+        PolicyConfiguration configuration = new PolicyConfiguration(0, 0, 1, 0, 0, 0, 0);
+        ManagedRunService service = service(configuration);
+        service.start("attempt-limit", graph, handoff());
+
+        assertThrows(GraphExecutionException.class, () -> service.resume("attempt-limit", graph));
+        RunState stopped = service.resume("attempt-limit", graph);
+
+        assertEquals(1, attempts.get());
+        assertEquals(0, stopped.executedSteps());
+        assertEquals(1, service.inspect("attempt-limit").policyState().nodeCalls());
+        assertEquals(
+                "limit.node-calls",
+                service.inspect("attempt-limit").policyState().lastDecision().reasonCode());
+    }
+
+    @Test
     void resumesTheInterruptedNodeFromTheLastSafeState() {
         AtomicInteger attempts = new AtomicInteger();
         GraphDefinition crashOnce = oneNodeGraph(context -> {
@@ -199,6 +229,7 @@ class ManagedRunServiceTest {
         RunInspection interrupted = service.inspect("run-001");
         assertEquals(CheckpointPhase.NODE_STARTED, interrupted.phase());
         assertEquals(0, interrupted.state().executedSteps());
+        assertEquals(1, interrupted.policyState().nodeCalls());
 
         RunState resumed = service.resume("run-001", crashOnce);
         RunState expected = new GraphRunner(new GraphValidator()).run(
@@ -207,6 +238,7 @@ class ManagedRunServiceTest {
 
         assertEquals(expected, resumed);
         assertEquals(2, attempts.get());
+        assertEquals(2, service.inspect("run-001").policyState().nodeCalls());
     }
 
     @Test
@@ -216,7 +248,9 @@ class ManagedRunServiceTest {
         String crashOutput = new String(crashed.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 
         assertEquals(23, crashExit, crashOutput);
-        assertEquals(CheckpointPhase.NODE_STARTED, service().inspect("forced-run").phase());
+        RunInspection crashedInspection = service().inspect("forced-run");
+        assertEquals(CheckpointPhase.NODE_STARTED, crashedInspection.phase());
+        assertEquals(1, crashedInspection.policyState().nodeCalls());
 
         Process resumed = fixtureProcess("resume");
         int resumeExit = resumed.waitFor();
@@ -226,6 +260,7 @@ class ManagedRunServiceTest {
         RunInspection completed = service().inspect("forced-run");
         assertEquals(RunStatus.COMPLETED, completed.state().status());
         assertEquals(1, completed.state().executedSteps());
+        assertEquals(2, completed.policyState().nodeCalls());
         assertEquals("done", completed.state().values().get("result"));
     }
 
@@ -340,12 +375,22 @@ class ManagedRunServiceTest {
                 "run-001",
                 GraphSignature.calculate(graph),
                 CheckpointPhase.READY,
-                completed));
+                completed,
+                PolicyConfiguration.unlimited(),
+                PolicyState.initial(0)
+                        .withCounters(1, 1, 0, 0)
+                        .withDecision(PolicyDecision.continueExecution(
+                                "policy.continue",
+                                "safe to continue"))));
 
         List<RunEventType> inspectionTypes = service.inspect("run-001").events().stream()
                 .map(event -> event.type())
                 .toList();
         assertTrue(inspectionTypes.contains(RunEventType.NODE_COMPLETED));
+        assertTrue(inspectionTypes.indexOf(RunEventType.NODE_COMPLETED)
+                < inspectionTypes.indexOf(RunEventType.POLICY_EVALUATED));
+        assertTrue(inspectionTypes.indexOf(RunEventType.POLICY_EVALUATED)
+                < inspectionTypes.indexOf(RunEventType.RUN_COMPLETED));
         assertTrue(inspectionTypes.contains(RunEventType.RUN_COMPLETED));
         assertFalse(events.readAll("run-001").events().stream()
                 .anyMatch(event -> event.type() == RunEventType.RUN_COMPLETED));

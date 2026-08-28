@@ -56,6 +56,6 @@ public final class LimitPolicy {
     }
 
     private static PolicyDecision limit(String code, String detail) {
-        return new PolicyDecision(PolicyOutcome.LIMIT_REACHED, code, detail, true);
+        return new PolicyDecision(PolicyOutcome.LIMIT_REACHED, code, detail, false);
     }
 }

@@ -51,7 +51,7 @@ class CheckpointCodecTest {
                 state,
                 new PolicyConfiguration(5, 60_000, 10, 2, 1_000, 3, 3),
                 PolicyState.initial(1234).withCounters(2, 2, 1, 400).withDecision(
-                        new PolicyDecision(PolicyOutcome.LIMIT_REACHED, "limit.usage", "usage reached", true)));
+                        new PolicyDecision(PolicyOutcome.LIMIT_REACHED, "limit.usage", "usage reached", false)));
 
         RunCheckpoint restored = codec.decode(codec.encode(checkpoint));
 

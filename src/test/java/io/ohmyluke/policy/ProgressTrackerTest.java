@@ -81,6 +81,30 @@ class ProgressTrackerTest {
         assertEquals(5, state.usage());
     }
 
+    @Test
+    void countersSaturateInsteadOfWrappingOrThrowing() {
+        PolicyState state = PolicyState.initial(0).withCounters(Long.MAX_VALUE, 0, 0, 0);
+
+        PolicyState observed = tracker.observe(state, observation(null, "state"));
+
+        assertEquals(Long.MAX_VALUE, observed.iterations());
+        assertEquals(
+                "counter.capacity-reached",
+                new PolicyEngine(java.time.Clock.systemUTC())
+                        .evaluateOperational(PolicyConfiguration.unlimited(), observed)
+                        .reasonCode());
+    }
+
+    @Test
+    void constructorNormalizationPreservesNodeIdentityCase() {
+        FailureFingerprint direct = new FailureFingerprint(" NODE ", " FAILED ", "Build", " Error  HERE ");
+        FailureFingerprint normalized = FailureFingerprint.normalized("node", "failed", "Build", "error here");
+        FailureFingerprint otherNode = FailureFingerprint.normalized("node", "failed", "build", "error here");
+
+        assertEquals(normalized, direct);
+        org.junit.jupiter.api.Assertions.assertNotEquals(normalized, otherNode);
+    }
+
     private static ProgressObservation observation(FailureFingerprint failure, String state) {
         return new ProgressObservation(1, 1, 0, 0, failure, state);
     }

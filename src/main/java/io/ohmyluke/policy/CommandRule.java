@@ -3,21 +3,21 @@ package io.ohmyluke.policy;
 import java.util.List;
 import java.util.Objects;
 
-/** An exact executable and argument-prefix allowlist entry configured by the operator. */
-public record CommandRule(String executable, List<String> argumentPrefix, CommandRisk risk) {
+/** An exact executable and complete argument-list allowlist entry configured by the operator. */
+public record CommandRule(String executable, List<String> arguments, CommandRisk risk) {
     public CommandRule {
         executable = requireText(executable, "executable");
-        argumentPrefix = List.copyOf(Objects.requireNonNull(argumentPrefix, "argumentPrefix"));
-        argumentPrefix.forEach(argument -> requireText(argument, "argumentPrefix entry"));
+        if (!java.nio.file.Path.of(executable).isAbsolute()) {
+            throw new IllegalArgumentException("executable must be an operator-trusted absolute path");
+        }
+        arguments = List.copyOf(Objects.requireNonNull(arguments, "arguments"));
+        arguments.forEach(argument -> requireText(argument, "arguments entry"));
         Objects.requireNonNull(risk, "risk");
     }
 
     public boolean matches(CommandInvocation invocation) {
-        if (!executable.equals(invocation.executable())
-                || argumentPrefix.size() > invocation.arguments().size()) {
-            return false;
-        }
-        return invocation.arguments().subList(0, argumentPrefix.size()).equals(argumentPrefix);
+        return executable.equals(invocation.executable())
+                && arguments.equals(invocation.arguments());
     }
 
     private static String requireText(String value, String name) {

@@ -10,10 +10,10 @@ public record FailureFingerprint(
         String node,
         String normalizedCause) {
     public FailureFingerprint {
-        type = requireText(type, "type");
-        code = requireText(code, "code");
-        node = requireText(node, "node");
-        normalizedCause = requireText(normalizedCause, "normalizedCause");
+        type = normalizeInsensitive(type, "type");
+        code = normalizeInsensitive(code, "code");
+        node = normalizeNode(node);
+        normalizedCause = normalizeInsensitive(normalizedCause, "normalizedCause");
     }
 
     public static FailureFingerprint normalized(
@@ -21,18 +21,18 @@ public record FailureFingerprint(
             String code,
             String node,
             String cause) {
-        return new FailureFingerprint(
-                normalize(type),
-                normalize(code),
-                normalize(node),
-                normalize(cause));
+        return new FailureFingerprint(type, code, node, cause);
     }
 
-    private static String normalize(String value) {
-        return requireText(value, "fingerprint value")
+    private static String normalizeInsensitive(String value, String name) {
+        return requireText(value, name)
                 .trim()
                 .replaceAll("\\s+", " ")
                 .toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeNode(String value) {
+        return requireText(value, "node").trim().replaceAll("\\s+", " ");
     }
 
     private static String requireText(String value, String name) {

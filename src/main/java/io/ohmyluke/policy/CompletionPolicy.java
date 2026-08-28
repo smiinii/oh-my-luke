@@ -17,9 +17,8 @@ public final class CompletionPolicy {
                     "completion.satisfied",
                     "all required objective completion evidence is satisfied");
         }
-        long unmet = result.evidence().stream().filter(evidence -> !evidence.satisfied()).count();
         return PolicyDecision.continueExecution(
                 "completion.pending",
-                unmet + " objective completion condition(s) remain unsatisfied");
+                "the objective completion expression is not satisfied");
     }
 }

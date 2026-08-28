@@ -47,7 +47,7 @@ class CompletionEvaluatorTest {
         assertFalse(result.satisfied());
         assertEquals(
                 List.of(
-                        "command-exit-code:./gradlew test",
+                        "command-exit-code:sha256:" + tests.canonicalId(),
                         "file-exists:build/report.html",
                         "unresolved-critical-issues:0"),
                 result.evidence().stream().map(ConditionEvidence::conditionId).toList());
@@ -81,5 +81,13 @@ class CompletionEvaluatorTest {
         CompletionFacts facts = new CompletionFacts(Map.of(), Set.of("result.txt"), 0, Set.of());
 
         assertEquals(evaluator.evaluate(condition, facts), evaluator.evaluate(condition, facts));
+    }
+
+    @Test
+    void commandEvidenceIdentityPreservesArgumentBoundaries() {
+        CommandInvocation oneArgument = new CommandInvocation("tool", List.of("a b"));
+        CommandInvocation twoArguments = new CommandInvocation("tool", List.of("a", "b"));
+
+        assertFalse(oneArgument.canonicalId().equals(twoArguments.canonicalId()));
     }
 }

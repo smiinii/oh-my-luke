@@ -18,6 +18,12 @@ public record PolicyDecision(
             throw new IllegalArgumentException("reasonCode must be stable kebab/dot notation");
         }
         detail = requireText(detail, "detail");
+        if (outcome == PolicyOutcome.CONTINUE && !resumable) {
+            throw new IllegalArgumentException("CONTINUE decisions must be resumable");
+        }
+        if ((outcome == PolicyOutcome.SUCCESS || outcome == PolicyOutcome.CANCELLED) && resumable) {
+            throw new IllegalArgumentException(outcome + " decisions must not be resumable");
+        }
     }
 
     public static PolicyDecision continueExecution(String code, String detail) {

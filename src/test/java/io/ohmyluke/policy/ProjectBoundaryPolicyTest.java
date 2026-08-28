@@ -33,7 +33,7 @@ class ProjectBoundaryPolicyTest {
         PolicyDecision decision = policy.evaluate(project.resolve("../outside.txt"), FileAccess.WRITE);
 
         assertEquals(PolicyOutcome.BLOCKED, decision.outcome());
-        assertEquals("boundary.outside", decision.reasonCode());
+        assertEquals("boundary.parent-traversal", decision.reasonCode());
         assertFalse(decision.resumable());
     }
 
@@ -63,7 +63,33 @@ class ProjectBoundaryPolicyTest {
 
         assertEquals("boundary.final-symlink", write.reasonCode());
         assertEquals("boundary.final-symlink", delete.reasonCode());
-        assertEquals(PolicyOutcome.CONTINUE, read.outcome());
-        assertTrue(read.resumable());
+        assertEquals("boundary.final-symlink", read.reasonCode());
+    }
+
+    @Test
+    void rawParentTraversalCannotHideBehindAnInternalSymlink() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Path self = Files.createSymbolicLink(project.resolve("self"), Path.of("."));
+        ProjectBoundaryPolicy policy = new ProjectBoundaryPolicy(project);
+
+        PolicyDecision decision = policy.evaluate(self.resolve("../outside.txt"), FileAccess.WRITE);
+
+        assertEquals(PolicyOutcome.BLOCKED, decision.outcome());
+        assertEquals("boundary.parent-traversal", decision.reasonCode());
+    }
+
+    @Test
+    void deleteRequiresApprovalBoundToTheExactPathAndOperation() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Path target = Files.writeString(project.resolve("target.txt"), "safe");
+        ProjectBoundaryPolicy policy = new ProjectBoundaryPolicy(project);
+        FileApprovalGrant wrong = new FileApprovalGrant(
+                "approval-1", policy.projectRoot().toString(), "other.txt", FileAccess.DELETE);
+        FileApprovalGrant exact = new FileApprovalGrant(
+                "approval-2", policy.projectRoot().toString(), "target.txt", FileAccess.DELETE);
+
+        assertEquals("boundary.approval-required", policy.evaluate(target, FileAccess.DELETE).reasonCode());
+        assertEquals("boundary.approval-required", policy.evaluate(target, FileAccess.DELETE, wrong).reasonCode());
+        assertEquals(PolicyOutcome.CONTINUE, policy.evaluate(target, FileAccess.DELETE, exact).outcome());
     }
 }

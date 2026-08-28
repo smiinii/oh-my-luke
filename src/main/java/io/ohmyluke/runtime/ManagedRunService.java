@@ -6,7 +6,6 @@ import io.ohmyluke.graph.NodeId;
 import io.ohmyluke.graph.RunState;
 import io.ohmyluke.graph.RunStatus;
 import io.ohmyluke.graph.TransitionEvent;
-import io.ohmyluke.graph.Outcome;
 import io.ohmyluke.policy.CompletionCondition;
 import io.ohmyluke.policy.CompletionFacts;
 import io.ohmyluke.policy.FailureFingerprint;
@@ -147,7 +146,10 @@ public final class ManagedRunService {
         try (RunLockManager.RunLease ignored = locks.acquire(runId)) {
             RunCheckpoint checkpoint = loadForAction(runId);
             RunState current = checkpoint.state();
-            if (current.status() != RunStatus.RUNNING) {
+            PolicyOutcome policyOutcome = checkpoint.policyState().lastDecision().outcome();
+            if (current.status() != RunStatus.RUNNING
+                    || policyOutcome == PolicyOutcome.SUCCESS
+                    || policyOutcome == PolicyOutcome.CANCELLED) {
                 return current;
             }
             RunCheckpoint updated = cancelledCheckpoint(checkpoint);
@@ -166,7 +168,8 @@ public final class ManagedRunService {
             Objects.requireNonNull(condition, "condition");
             Objects.requireNonNull(facts, "facts");
             RunCheckpoint checkpoint = loadForAction(runId);
-            if (checkpoint.policyState().lastDecision().outcome() == PolicyOutcome.CANCELLED) {
+            PolicyOutcome previous = checkpoint.policyState().lastDecision().outcome();
+            if (previous == PolicyOutcome.SUCCESS || previous == PolicyOutcome.CANCELLED) {
                 return checkpoint.policyState().lastDecision();
             }
             PolicyDecision decision = policyEngine.evaluateCompletion(
@@ -204,30 +207,25 @@ public final class ManagedRunService {
         if (!canExecute(checkpoint)) {
             return checkpoint;
         }
+        PolicyState attempted = progressTracker.recordAttempt(checkpoint.policyState(), 1, 1);
         RunCheckpoint started = RunCheckpoint.current(
                 checkpoint.runId(),
                 checkpoint.graphSignature(),
                 CheckpointPhase.NODE_STARTED,
                 checkpoint.state(),
                 checkpoint.policyConfiguration(),
-                checkpoint.policyState());
+                attempted);
         checkpoints.save(started);
         append(started, RunEventType.NODE_STARTED, "node execution started");
 
         RunState updatedState = runner.step(prepared, checkpoint.state());
         TransitionEvent transition = updatedState.events().getLast();
-        FailureFingerprint failure = transition.outcome() == Outcome.FAILURE
-                ? FailureFingerprint.normalized(
-                        "node",
-                        "outcome.failure",
-                        transition.node().value(),
-                        transition.selectionReason())
-                : null;
+        FailureFingerprint failure = null;
         PolicyState observed = progressTracker.observe(
-                checkpoint.policyState(),
+                attempted,
                 new ProgressObservation(
-                        1,
-                        1,
+                        0,
+                        0,
                         0,
                         0,
                         failure,
@@ -337,25 +335,8 @@ public final class ManagedRunService {
                         "node completion recovered from checkpoint"));
             }
         }
-        if (checkpoint.state().status() == RunStatus.COMPLETED) {
-            boolean completionRecorded = completeEvents.stream().anyMatch(event ->
-                    event.type() == RunEventType.RUN_COMPLETED
-                            && event.executedSteps() == checkpoint.state().executedSteps());
-            if (!completionRecorded) {
-                RunState state = checkpoint.state();
-                completeEvents.add(RunEvent.current(
-                        checkpoint.runId(),
-                        sequence++,
-                        RunEventType.RUN_COMPLETED,
-                        state.currentNode(),
-                        state.status(),
-                        state.executedSteps(),
-                        "run completion recovered from checkpoint"));
-            }
-        }
         PolicyDecision policyDecision = checkpoint.policyState().lastDecision();
-        boolean policyWasEvaluated = checkpoint.policyState().iterations() > 0
-                || !policyDecision.reasonCode().equals("policy.not-evaluated");
+        boolean policyWasEvaluated = !policyDecision.reasonCode().equals("policy.not-evaluated");
         boolean policyEventRecorded = completeEvents.stream().anyMatch(event ->
                 event.type() == RunEventType.POLICY_EVALUATED
                         && event.executedSteps() == checkpoint.state().executedSteps()
@@ -370,6 +351,23 @@ public final class ManagedRunService {
                     state.status(),
                     state.executedSteps(),
                     policyDetail(policyDecision) + ":recovered=true"));
+            sequence++;
+        }
+        if (checkpoint.state().status() == RunStatus.COMPLETED) {
+            boolean completionRecorded = completeEvents.stream().anyMatch(event ->
+                    event.type() == RunEventType.RUN_COMPLETED
+                            && event.executedSteps() == checkpoint.state().executedSteps());
+            if (!completionRecorded) {
+                RunState state = checkpoint.state();
+                completeEvents.add(RunEvent.current(
+                        checkpoint.runId(),
+                        sequence,
+                        RunEventType.RUN_COMPLETED,
+                        state.currentNode(),
+                        state.status(),
+                        state.executedSteps(),
+                        "run completion recovered from checkpoint"));
+            }
         }
         return List.copyOf(completeEvents);
     }

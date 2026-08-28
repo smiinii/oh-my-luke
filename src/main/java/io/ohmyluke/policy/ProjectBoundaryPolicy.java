@@ -3,7 +3,9 @@ package io.ohmyluke.policy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Objects;
 
 /** Fail-closed path validation for one configured project root. */
@@ -29,8 +31,20 @@ public final class ProjectBoundaryPolicy {
     }
 
     public PolicyDecision evaluate(Path requestedPath, FileAccess access) {
+        return evaluate(requestedPath, access, null);
+    }
+
+    public PolicyDecision evaluate(
+            Path requestedPath,
+            FileAccess access,
+            FileApprovalGrant approval) {
         Objects.requireNonNull(requestedPath, "requestedPath");
         Objects.requireNonNull(access, "access");
+        for (Path part : requestedPath) {
+            if (part.toString().equals("..")) {
+                return blocked("boundary.parent-traversal", "Parent path traversal is not allowed");
+            }
+        }
 
         Path absolute = requestedPath.isAbsolute()
                 ? requestedPath.toAbsolutePath().normalize()
@@ -49,18 +63,26 @@ public final class ProjectBoundaryPolicy {
         for (Path part : relative) {
             index++;
             inspected = inspected.resolve(part);
-            if (!Files.exists(inspected, LinkOption.NOFOLLOW_LINKS)) {
+            BasicFileAttributes attributes;
+            try {
+                attributes = Files.readAttributes(
+                        inspected,
+                        BasicFileAttributes.class,
+                        LinkOption.NOFOLLOW_LINKS);
+            } catch (NoSuchFileException missing) {
                 break;
+            } catch (IOException unresolved) {
+                return blocked("boundary.unresolved", "Path component could not be inspected safely");
             }
-            if (!Files.isSymbolicLink(inspected)) {
+            if (!attributes.isSymbolicLink()) {
                 continue;
             }
 
             boolean finalComponent = index == relative.getNameCount();
-            if (finalComponent && access != FileAccess.READ) {
+            if (finalComponent) {
                 return blocked(
                         "boundary.final-symlink",
-                        "Writing or deleting through a final symbolic link is not allowed");
+                        "Access through a final symbolic link is not allowed");
             }
 
             try {
@@ -73,6 +95,14 @@ public final class ProjectBoundaryPolicy {
             }
         }
 
+        if (access == FileAccess.DELETE && !isApproved(approval, relative, access)) {
+            return new PolicyDecision(
+                    PolicyOutcome.BLOCKED,
+                    "boundary.approval-required",
+                    "Deleting an exact project path requires an operation-bound user approval",
+                    true);
+        }
+
         return PolicyDecision.continueExecution(
                 "boundary.allowed",
                 "Requested path stays inside the configured project root");
@@ -80,5 +110,15 @@ public final class ProjectBoundaryPolicy {
 
     private static PolicyDecision blocked(String code, String detail) {
         return new PolicyDecision(PolicyOutcome.BLOCKED, code, detail, false);
+    }
+
+    private boolean isApproved(
+            FileApprovalGrant approval,
+            Path relative,
+            FileAccess access) {
+        return approval != null
+                && approval.projectRoot().equals(projectRoot.toString())
+                && approval.relativePath().equals(relative.toString())
+                && approval.access() == access;
     }
 }
