@@ -15,9 +15,15 @@ import io.ohmyluke.graph.Node;
 import io.ohmyluke.graph.NodeContext;
 import io.ohmyluke.graph.NodeId;
 import io.ohmyluke.graph.NodeResult;
+import io.ohmyluke.graph.Outcome;
 import io.ohmyluke.graph.RunState;
 import io.ohmyluke.graph.RunStatus;
 import io.ohmyluke.graph.StatePatch;
+import io.ohmyluke.policy.CompletionCondition;
+import io.ohmyluke.policy.CompletionFacts;
+import io.ohmyluke.policy.PolicyConfiguration;
+import io.ohmyluke.policy.PolicyDecision;
+import io.ohmyluke.policy.PolicyOutcome;
 import io.ohmyluke.state.CheckpointCodec;
 import io.ohmyluke.state.CheckpointException;
 import io.ohmyluke.state.CheckpointPhase;
@@ -33,6 +39,10 @@ import io.ohmyluke.state.GraphSignature;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -70,6 +80,7 @@ class ManagedRunServiceTest {
                         RunEventType.RUN_RESUMED,
                         RunEventType.NODE_STARTED,
                         RunEventType.NODE_COMPLETED,
+                        RunEventType.POLICY_EVALUATED,
                         RunEventType.RUN_COMPLETED),
                 inspection.events().stream().map(event -> event.type()).toList());
         assertEquals(
@@ -83,6 +94,91 @@ class ManagedRunServiceTest {
         assertTrue(Files.exists(projectRoot.resolve(".oml/runs/run-001/events.jsonl")));
         assertTrue(Files.exists(projectRoot.resolve(".oml/runs/run-001/handoff.md")));
         assertFalse(inspection.recoveredFromBackup());
+    }
+
+    @Test
+    void stopsAtThePersistedPolicyLimitAndKeepsCountersAfterRestart() {
+        PolicyConfiguration configuration = new PolicyConfiguration(2, 0, 0, 0, 0, 0, 0);
+        ManagedRunService first = service(configuration);
+        GraphDefinition graph = repeatingGraph(context -> NodeResult.success(), 10);
+        first.start("limited-run", graph, handoff());
+
+        RunState stopped = first.resume("limited-run", graph);
+        RunInspection beforeRestart = first.inspect("limited-run");
+        ManagedRunService restarted = service(PolicyConfiguration.unlimited());
+        RunState resumed = restarted.resume("limited-run", graph);
+        RunInspection afterRestart = restarted.inspect("limited-run");
+
+        assertEquals(RunStatus.RUNNING, stopped.status());
+        assertEquals(2, stopped.executedSteps());
+        assertEquals(PolicyOutcome.LIMIT_REACHED, beforeRestart.policyState().lastDecision().outcome());
+        assertEquals("limit.iterations", beforeRestart.policyState().lastDecision().reasonCode());
+        assertEquals(2, beforeRestart.policyState().iterations());
+        assertEquals(2, beforeRestart.policyState().nodeCalls());
+        assertEquals(stopped, resumed);
+        assertEquals(beforeRestart.policyState(), afterRestart.policyState());
+        assertEquals(configuration, afterRestart.policyConfiguration());
+    }
+
+    @Test
+    void persistsObjectiveSuccessWithoutExecutingAnotherNode() {
+        AtomicInteger executions = new AtomicInteger();
+        GraphDefinition graph = repeatingGraph(context -> {
+            executions.incrementAndGet();
+            return NodeResult.success();
+        }, 10);
+        ManagedRunService service = service();
+        service.start("objective-run", graph, handoff());
+
+        PolicyDecision decision = service.evaluateCompletion(
+                "objective-run",
+                new CompletionCondition.FileExists("artifact.txt"),
+                new CompletionFacts(Map.of(), Set.of("artifact.txt"), 0, Set.of()));
+        RunState resumed = service.resume("objective-run", graph);
+        RunInspection inspection = service.inspect("objective-run");
+
+        assertEquals(PolicyOutcome.SUCCESS, decision.outcome());
+        assertEquals(0, executions.get());
+        assertEquals(RunStatus.RUNNING, resumed.status());
+        assertEquals(PolicyOutcome.SUCCESS, inspection.policyState().lastDecision().outcome());
+        assertEquals(RunEventType.POLICY_EVALUATED, inspection.events().getLast().type());
+    }
+
+    @Test
+    void cancellationIsAlsoPersistedAsADistinctPolicyOutcome() {
+        ManagedRunService service = service();
+        GraphDefinition graph = oneNodeGraph(context -> NodeResult.success(), 0);
+        service.start("cancel-policy", graph, handoff());
+
+        service.cancel("cancel-policy");
+
+        RunInspection inspection = service.inspect("cancel-policy");
+        assertEquals(PolicyOutcome.CANCELLED, inspection.policyState().lastDecision().outcome());
+        assertEquals("run.cancelled", inspection.policyState().lastDecision().reasonCode());
+        assertFalse(inspection.policyState().lastDecision().resumable());
+    }
+
+    @Test
+    void elapsedLimitIsCheckedBeforeAResumedNodeExecutes() {
+        AtomicInteger executions = new AtomicInteger();
+        Clock startedAt = Clock.fixed(Instant.parse("2026-08-28T00:00:00Z"), ZoneOffset.UTC);
+        PolicyConfiguration configuration = new PolicyConfiguration(0, 60_000, 0, 0, 0, 0, 0);
+        GraphDefinition graph = repeatingGraph(context -> {
+            executions.incrementAndGet();
+            return NodeResult.success();
+        }, 10);
+        service(configuration, startedAt).start("elapsed-run", graph, handoff());
+
+        ManagedRunService restarted = service(
+                PolicyConfiguration.unlimited(),
+                Clock.offset(startedAt, Duration.ofMinutes(2)));
+        RunState state = restarted.resume("elapsed-run", graph);
+
+        assertEquals(0, executions.get());
+        assertEquals(0, state.executedSteps());
+        assertEquals(
+                "limit.elapsed-time",
+                restarted.inspect("elapsed-run").policyState().lastDecision().reasonCode());
     }
 
     @Test
@@ -169,7 +265,11 @@ class ManagedRunServiceTest {
         assertEquals(RunStatus.CANCELLED, cancelled.status());
         assertEquals(cancelled, resumed);
         assertEquals(0, executions.get());
-        assertEquals(RunEventType.RUN_CANCELLED, service.inspect("run-001").events().getLast().type());
+        List<RunEventType> eventTypes = service.inspect("run-001").events().stream()
+                .map(event -> event.type())
+                .toList();
+        assertTrue(eventTypes.contains(RunEventType.RUN_CANCELLED));
+        assertEquals(RunEventType.POLICY_EVALUATED, eventTypes.getLast());
     }
 
     @Test
@@ -261,18 +361,51 @@ class ManagedRunServiceTest {
     }
 
     private ManagedRunService service() {
+        return service(PolicyConfiguration.unlimited());
+    }
+
+    private ManagedRunService service(PolicyConfiguration configuration) {
+        return service(
+                configuration,
+                Clock.fixed(Instant.parse("2026-08-28T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private ManagedRunService service(PolicyConfiguration configuration, Clock clock) {
         return service(
                 new CheckpointStore(projectRoot, new CheckpointCodec()),
-                new EventLogStore(projectRoot, new RunEventCodec()));
+                new EventLogStore(projectRoot, new RunEventCodec()),
+                configuration,
+                clock);
     }
 
     private ManagedRunService service(CheckpointStore checkpoints, EventLogStore events) {
+        return service(checkpoints, events, PolicyConfiguration.unlimited());
+    }
+
+    private ManagedRunService service(
+            CheckpointStore checkpoints,
+            EventLogStore events,
+            PolicyConfiguration configuration) {
+        return service(
+                checkpoints,
+                events,
+                configuration,
+                Clock.fixed(Instant.parse("2026-08-28T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private ManagedRunService service(
+            CheckpointStore checkpoints,
+            EventLogStore events,
+            PolicyConfiguration configuration,
+            Clock clock) {
         return new ManagedRunService(
                 new GraphRunner(new GraphValidator()),
                 checkpoints,
                 events,
                 new HandoffStore(projectRoot),
-                new RunLockManager(projectRoot));
+                new RunLockManager(projectRoot),
+                configuration,
+                clock);
     }
 
     private Process fixtureProcess(String mode) throws Exception {
@@ -296,6 +429,22 @@ class ManagedRunServiceTest {
                 WORK,
                 Set.of(node),
                 List.of(new Edge(WORK, END, Condition.always())),
+                Set.of(END),
+                maxSteps);
+    }
+
+    private static GraphDefinition repeatingGraph(
+            Function<NodeContext, NodeResult> action,
+            int maxSteps) {
+        Node node = new TestNode(WORK, action);
+        return new GraphDefinition(
+                WORK,
+                Set.of(node),
+                List.of(
+                        new Edge(WORK, WORK, Condition.outcomeIs(Outcome.SUCCESS)),
+                        new Edge(WORK, END, Condition.outcomeIs(Outcome.FAILURE)),
+                        new Edge(WORK, END, Condition.outcomeIs(Outcome.SKIPPED)),
+                        new Edge(WORK, END, Condition.outcomeIs(Outcome.CANCELLED))),
                 Set.of(END),
                 maxSteps);
     }

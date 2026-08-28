@@ -59,6 +59,15 @@ public final class OmlukeCli {
         out.println("phase=" + inspection.phase());
         out.println("currentNode=" + inspection.state().currentNode().value());
         out.println("executedSteps=" + inspection.state().executedSteps());
+        out.println("policyOutcome=" + inspection.policyState().lastDecision().outcome());
+        out.println("policyReason=" + inspection.policyState().lastDecision().reasonCode());
+        out.println("policyResumable=" + inspection.policyState().lastDecision().resumable());
+        out.println("iterations=" + inspection.policyState().iterations());
+        out.println("nodeCalls=" + inspection.policyState().nodeCalls());
+        out.println("toolCalls=" + inspection.policyState().toolCalls());
+        out.println("usage=" + inspection.policyState().usage());
+        out.println("repeatedFailureCount=" + inspection.policyState().repeatedFailureCount());
+        out.println("noProgressCount=" + inspection.policyState().noProgressCount());
         out.println("events=" + inspection.events().size());
         out.println("recoveredFromBackup=" + inspection.recoveredFromBackup());
         out.println("ignoredIncompleteEventTail=" + inspection.ignoredIncompleteEventTail());

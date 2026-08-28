@@ -79,7 +79,9 @@ class CheckpointStoreTest {
         store.save(checkpoint("run-001", 1));
         store.save(checkpoint("run-001", 2));
         String unsupported = Files.readString(store.statePath("run-001"))
-                .replace("\"schemaVersion\" : 1", "\"schemaVersion\" : 999");
+                .replace(
+                        "\"schemaVersion\" : " + RunCheckpoint.CURRENT_SCHEMA_VERSION,
+                        "\"schemaVersion\" : 999");
         Files.writeString(store.statePath("run-001"), unsupported);
 
         assertThrows(

@@ -9,6 +9,10 @@ import io.ohmyluke.graph.RunState;
 import io.ohmyluke.graph.RunStatus;
 import io.ohmyluke.graph.StatePatch;
 import io.ohmyluke.graph.TransitionEvent;
+import io.ohmyluke.policy.PolicyConfiguration;
+import io.ohmyluke.policy.PolicyDecision;
+import io.ohmyluke.policy.PolicyOutcome;
+import io.ohmyluke.policy.PolicyState;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,7 +48,10 @@ class CheckpointCodecTest {
                 "run-001",
                 "graph-signature",
                 CheckpointPhase.READY,
-                state);
+                state,
+                new PolicyConfiguration(5, 60_000, 10, 2, 1_000, 3, 3),
+                PolicyState.initial(1234).withCounters(2, 2, 1, 400).withDecision(
+                        new PolicyDecision(PolicyOutcome.LIMIT_REACHED, "limit.usage", "usage reached", true)));
 
         RunCheckpoint restored = codec.decode(codec.encode(checkpoint));
 
@@ -53,6 +60,33 @@ class CheckpointCodecTest {
         assertEquals(
                 List.of("first", "second"),
                 List.copyOf(restored.state().events().getFirst().stateAfter().keySet()));
+    }
+
+    @Test
+    void migratesLegacyVersionOneWithSafePolicyDefaults() {
+        String legacy = """
+                {
+                  "schemaVersion": 1,
+                  "runId": "run-001",
+                  "graphSignature": "signature",
+                  "phase": "READY",
+                  "state": {
+                    "status": "RUNNING",
+                    "currentNode": {"value": "work"},
+                    "executedSteps": 0,
+                    "values": {},
+                    "path": [{"value": "work"}],
+                    "events": []
+                  }
+                }
+                """;
+
+        RunCheckpoint migrated = codec.decode(legacy);
+
+        assertEquals(RunCheckpoint.CURRENT_SCHEMA_VERSION, migrated.schemaVersion());
+        assertEquals(PolicyConfiguration.unlimited(), migrated.policyConfiguration());
+        assertEquals(0, migrated.policyState().iterations());
+        assertEquals("policy.not-evaluated", migrated.policyState().lastDecision().reasonCode());
     }
 
     @Test
@@ -84,7 +118,9 @@ class CheckpointCodecTest {
                         0,
                         Map.of(),
                         List.of(node),
-                        List.of()));
+                        List.of()),
+                PolicyConfiguration.unlimited(),
+                PolicyState.initial(0));
 
         assertThrows(UnsupportedCheckpointVersionException.class, () -> codec.encode(unsupported));
     }

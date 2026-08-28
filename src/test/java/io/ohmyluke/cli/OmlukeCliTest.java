@@ -59,6 +59,9 @@ class OmlukeCliTest {
 
         String text = output.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("runId=inspect-run\nstatus=RUNNING"));
+        assertTrue(text.contains("policyOutcome=CONTINUE"));
+        assertTrue(text.contains("policyReason=policy.not-evaluated"));
+        assertTrue(text.contains("iterations=0\nnodeCalls=0\ntoolCalls=0\nusage=0"));
         assertTrue(text.contains("runId=cancel-run\nstatus=CANCELLED"));
         assertTrue(text.contains("runId=resume-run\nstatus=COMPLETED\nexecutedSteps=1"));
         assertEquals("", errors.toString(StandardCharsets.UTF_8));
