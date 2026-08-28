@@ -23,7 +23,9 @@ public final class EventLogStore {
     public void append(RunEvent event) {
         Objects.requireNonNull(event, "event");
         try {
-            RunFileSupport.appendDurably(eventsPath(event.runId()), codec.encode(event) + "\n");
+            Path path = eventsPath(event.runId());
+            String separator = repairIncompleteTail(path);
+            RunFileSupport.appendDurably(path, separator + codec.encode(event) + "\n");
         } catch (IOException error) {
             throw new CheckpointException("failed to append run event for " + event.runId(), error);
         }
@@ -31,6 +33,9 @@ public final class EventLogStore {
 
     public EventLogReadResult readAll(String runId) {
         Path path = eventsPath(runId);
+        if (Files.notExists(path)) {
+            return new EventLogReadResult(List.of(), false);
+        }
         try {
             String content = Files.readString(path, StandardCharsets.UTF_8);
             boolean terminatedByNewline = content.endsWith("\n");
@@ -62,5 +67,26 @@ public final class EventLogStore {
 
     public Path eventsPath(String runId) {
         return RunFileSupport.file(projectRoot, runId, EVENTS_FILE);
+    }
+
+    private String repairIncompleteTail(Path path) throws IOException {
+        if (Files.notExists(path)) {
+            return "";
+        }
+        String content = Files.readString(path, StandardCharsets.UTF_8);
+        if (content.isEmpty() || content.endsWith("\n")) {
+            return "";
+        }
+        int lastNewline = content.lastIndexOf('\n');
+        String tail = content.substring(lastNewline + 1);
+        try {
+            codec.decode(tail);
+            return "\n";
+        } catch (UnsupportedCheckpointVersionException error) {
+            throw error;
+        } catch (CheckpointException error) {
+            RunFileSupport.writeDurably(path, content.substring(0, lastNewline + 1));
+            return "";
+        }
     }
 }

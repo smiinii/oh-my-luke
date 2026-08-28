@@ -30,7 +30,7 @@ public final class CheckpointStore {
         try {
             Files.createDirectories(runDirectory);
             RunFileSupport.writeDurably(temporary, codec.encode(checkpoint));
-            if (Files.exists(state)) {
+            if (Files.exists(state) && isReadyCheckpoint(state)) {
                 Files.copy(state, backupTemporary, StandardCopyOption.REPLACE_EXISTING);
                 RunFileSupport.forceFile(backupTemporary);
                 RunFileSupport.moveAtomically(backupTemporary, backup);
@@ -65,6 +65,10 @@ public final class CheckpointStore {
         return RunFileSupport.file(projectRoot, runId, STATE_FILE);
     }
 
+    public boolean exists(String runId) {
+        return Files.exists(statePath(runId));
+    }
+
     private RunCheckpoint read(Path path) {
         try {
             return codec.decode(Files.readString(path, StandardCharsets.UTF_8));
@@ -72,6 +76,16 @@ public final class CheckpointStore {
             throw error;
         } catch (IOException error) {
             throw new CheckpointException("failed to read checkpoint: " + path, error);
+        }
+    }
+
+    private boolean isReadyCheckpoint(Path path) {
+        try {
+            return read(path).phase() == CheckpointPhase.READY;
+        } catch (UnsupportedCheckpointVersionException error) {
+            throw error;
+        } catch (CheckpointException error) {
+            return false;
         }
     }
 

@@ -20,6 +20,16 @@ class EventLogStoreTest {
     Path projectRoot;
 
     @Test
+    void missingLogIsAnEmptyHistory() {
+        EventLogStore store = new EventLogStore(projectRoot, new RunEventCodec());
+
+        EventLogReadResult result = store.readAll("run-001");
+
+        assertEquals(List.of(), result.events());
+        assertFalse(result.ignoredIncompleteTail());
+    }
+
+    @Test
     void appendsAndReadsEventsInSequence() throws IOException {
         EventLogStore store = new EventLogStore(projectRoot, new RunEventCodec());
         RunEvent started = event(1, RunEventType.NODE_STARTED, "write", 0);
@@ -48,6 +58,24 @@ class EventLogStoreTest {
 
         assertEquals(List.of(started), result.events());
         assertTrue(result.ignoredIncompleteTail());
+    }
+
+    @Test
+    void appendingAfterAnIncompleteTailRepairsTheLog() throws IOException {
+        EventLogStore store = new EventLogStore(projectRoot, new RunEventCodec());
+        RunEvent started = event(1, RunEventType.NODE_STARTED, "write", 0);
+        RunEvent completed = event(2, RunEventType.NODE_COMPLETED, "write", 1);
+        store.append(started);
+        Files.writeString(
+                store.eventsPath("run-001"),
+                "{\"schemaVersion\":1",
+                StandardOpenOption.APPEND);
+
+        store.append(completed);
+        EventLogReadResult result = store.readAll("run-001");
+
+        assertEquals(List.of(started, completed), result.events());
+        assertFalse(result.ignoredIncompleteTail());
     }
 
     @Test

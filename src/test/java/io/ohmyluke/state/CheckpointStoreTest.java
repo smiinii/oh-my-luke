@@ -52,6 +52,28 @@ class CheckpointStoreTest {
     }
 
     @Test
+    void nodeStartedMarkerDoesNotReplaceTheLastReadyBackup() throws IOException {
+        CheckpointStore store = new CheckpointStore(projectRoot, codec);
+        RunCheckpoint safe = checkpoint("run-001", 1);
+        RunCheckpoint executing = RunCheckpoint.current(
+                safe.runId(),
+                safe.graphSignature(),
+                CheckpointPhase.NODE_STARTED,
+                safe.state());
+        RunCheckpoint latest = checkpoint("run-001", 2);
+        store.save(safe);
+        store.save(executing);
+        store.save(latest);
+        Files.writeString(store.statePath("run-001"), "{broken-json");
+
+        CheckpointLoadResult result = store.load("run-001");
+
+        assertEquals(safe, result.checkpoint());
+        assertEquals(CheckpointPhase.READY, result.checkpoint().phase());
+        assertTrue(result.recoveredFromBackup());
+    }
+
+    @Test
     void doesNotHideUnsupportedSchemaBehindBackupRecovery() throws IOException {
         CheckpointStore store = new CheckpointStore(projectRoot, codec);
         store.save(checkpoint("run-001", 1));
