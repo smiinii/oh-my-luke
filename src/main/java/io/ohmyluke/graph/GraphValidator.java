@@ -95,6 +95,10 @@ public final class GraphValidator {
                 problems.add("node id must not be null");
                 continue;
             }
+            String fingerprint = node.fingerprint();
+            if (fingerprint == null || fingerprint.isBlank()) {
+                problems.add("node fingerprint must not be blank: " + id);
+            }
             if (indexed.putIfAbsent(id, node) != null) {
                 problems.add("duplicate node id: " + id);
             }

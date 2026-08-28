@@ -19,7 +19,7 @@ public record RunState(
             throw new IllegalArgumentException("executedSteps must not be negative");
         }
         values = ImmutableStringMap.copyOf(values);
-        path = List.copyOf(Objects.requireNonNull(path, "path"));
-        events = List.copyOf(Objects.requireNonNull(events, "events"));
+        path = ImmutableAppendList.copyOf(path);
+        events = ImmutableAppendList.copyOf(events);
     }
 }

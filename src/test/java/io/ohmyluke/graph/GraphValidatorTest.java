@@ -175,6 +175,11 @@ class GraphValidatorTest {
         }
 
         @Override
+        public String fingerprint() {
+            return "graph-validator-test-node-v1";
+        }
+
+        @Override
         public NodeResult execute(NodeContext context) {
             return action.apply(context);
         }
