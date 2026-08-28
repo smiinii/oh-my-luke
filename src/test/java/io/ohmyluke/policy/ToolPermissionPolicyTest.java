@@ -2,18 +2,24 @@ package io.ohmyluke.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ToolPermissionPolicyTest {
     private static final Instant NOW = Instant.parse("2026-08-28T00:00:00Z");
-    private static final Path PROJECT = Path.of("/workspace/oh-my-luke");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+
+    @TempDir
+    Path project;
 
     @Test
     void allowsReversibleProjectWorkWithoutApproval() {
@@ -113,7 +119,7 @@ class ToolPermissionPolicyTest {
         ToolPermissionDecision otherRun = policy.evaluate(new ToolPermissionRequest(
                 "push-4",
                 "run-002",
-                PROJECT,
+                project,
                 ToolCapability.EXTERNAL_WRITE,
                 "git:origin"));
 
@@ -123,7 +129,7 @@ class ToolPermissionPolicyTest {
     }
 
     @Test
-    void projectGrantSurvivesRunsButNotProjectsTargetsOrExpiry() {
+    void projectGrantSurvivesRunsButNotProjectsTargetsOrExpiry() throws IOException {
         ToolPermissionRequest approved = request("push-1", ToolCapability.EXTERNAL_WRITE, "git:origin");
         ToolPermissionGrant grant = ToolPermissionGrant.forProject(
                 "grant-1",
@@ -134,13 +140,13 @@ class ToolPermissionPolicyTest {
         ToolPermissionDecision nextRun = policy.evaluate(new ToolPermissionRequest(
                 "push-2",
                 "run-002",
-                PROJECT,
+                project,
                 ToolCapability.EXTERNAL_WRITE,
                 "git:origin"));
         ToolPermissionDecision otherProject = policy.evaluate(new ToolPermissionRequest(
                 "push-3",
                 "run-002",
-                Path.of("/workspace/other"),
+                Files.createDirectory(project.resolve("other")),
                 ToolCapability.EXTERNAL_WRITE,
                 "git:origin"));
         ToolPermissionDecision expired = policy(false, List.of(ToolPermissionGrant.forProject(
@@ -150,18 +156,63 @@ class ToolPermissionPolicyTest {
                 .evaluate(approved);
 
         assertEquals(ToolPermission.ALLOW, nextRun.permission());
-        assertEquals(ToolPermission.ASK, otherProject.permission());
+        assertEquals(ToolPermission.DENY, otherProject.permission());
         assertEquals(ToolPermission.ASK, expired.permission());
     }
 
-    private static ToolPermissionPolicy policy(boolean autonomous, List<ToolPermissionGrant> grants) {
-        return new ToolPermissionPolicy(new PermissionGrantLedger(grants), autonomous, CLOCK);
+    @Test
+    void canonicalProjectRootPreventsSymlinkRetargeting() throws IOException {
+        Path first = Files.createDirectory(project.resolve("first"));
+        Path second = Files.createDirectory(project.resolve("second"));
+        Path link = Files.createSymbolicLink(project.resolve("project-link"), first);
+        ToolPermissionRequest approved = new ToolPermissionRequest(
+                "push-1", "run-001", link, ToolCapability.EXTERNAL_WRITE, "git:origin");
+        ToolPermissionGrant grant = ToolPermissionGrant.forProject(
+                "grant-link", approved, NOW.plusSeconds(60).toEpochMilli());
+        Files.delete(link);
+        Files.createSymbolicLink(link, second);
+        ToolPermissionRequest retargeted = new ToolPermissionRequest(
+                "push-2", "run-002", link, ToolCapability.EXTERNAL_WRITE, "git:origin");
+
+        ToolPermissionDecision result = new ToolPermissionPolicy(
+                        new PermissionGrantLedger(List.of(grant)),
+                        first,
+                        false,
+                        CLOCK)
+                .evaluate(retargeted);
+
+        assertEquals(ToolPermission.DENY, result.permission());
+        assertEquals("permission.project-mismatch", result.reasonCode());
     }
 
-    private static ToolPermissionRequest request(
+    @Test
+    void rejectsCredentialBearingTargetsAndDuplicateGrantIds() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> request(
+                        "network-secret",
+                        ToolCapability.NETWORK_ACCESS,
+                        "https://alice:hunter2@example.com/api"));
+        ToolPermissionRequest first = request("push-1", ToolCapability.EXTERNAL_WRITE, "git:origin");
+        ToolPermissionRequest second = request("push-2", ToolCapability.EXTERNAL_WRITE, "git:upstream");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new PermissionGrantLedger(List.of(
+                        ToolPermissionGrant.forProject(
+                                "duplicate", first, NOW.plusSeconds(60).toEpochMilli()),
+                        ToolPermissionGrant.forProject(
+                                "duplicate", second, NOW.plusSeconds(60).toEpochMilli()))));
+    }
+
+    private ToolPermissionPolicy policy(boolean autonomous, List<ToolPermissionGrant> grants) {
+        return new ToolPermissionPolicy(new PermissionGrantLedger(grants), project, autonomous, CLOCK);
+    }
+
+    private ToolPermissionRequest request(
             String operationId,
             ToolCapability capability,
             String target) {
-        return new ToolPermissionRequest(operationId, "run-001", PROJECT, capability, target);
+        return new ToolPermissionRequest(operationId, "run-001", project, capability, target);
     }
 }

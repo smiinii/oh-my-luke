@@ -76,6 +76,28 @@ class ProcessToolTest {
     }
 
     @Test
+    void projectGrantIsBoundToTheResolvedExecutableAndEveryArgument() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        ProcessToolRequest approvedRequest = javaRequest(project, "write").withCapability(
+                ToolCapability.EXTERNAL_WRITE,
+                "git:origin");
+        ProcessTool first = tool(project, new TestVerifiedSandbox(), false, List.of());
+        ToolPermissionGrant grant = ToolPermissionGrant.forProject(
+                "grant-exact-process",
+                first.permissionRequest(approvedRequest),
+                NOW.plusSeconds(60).toEpochMilli());
+        ProcessTool approved = tool(project, new TestVerifiedSandbox(), false, List.of(grant));
+        ProcessToolRequest differentCommand = javaRequest(project, "large", "1").withCapability(
+                ToolCapability.EXTERNAL_WRITE,
+                "git:origin");
+
+        ProcessToolResult result = approved.execute(differentCommand);
+
+        assertEquals(ToolPermission.ASK, result.permission().permission());
+        assertFalse(result.executed());
+    }
+
+    @Test
     void neverRunsShellWrappersEvenInAutonomousMode() throws IOException {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
         ProcessTool tool = tool(project, new TestVerifiedSandbox(), true, List.of());
@@ -83,6 +105,28 @@ class ProcessToolTest {
                 "shell-1",
                 Path.of("/bin/sh"),
                 List.of("-c", "touch escaped"),
+                Path.of("."),
+                Map.of(),
+                Duration.ofSeconds(5),
+                1024,
+                ToolCapability.LOCAL_PROCESS,
+                "local");
+
+        ProcessToolResult result = tool.execute(request);
+
+        assertEquals(ToolPermission.DENY, result.permission().permission());
+        assertEquals("process.shell-deny", result.permission().reasonCode());
+    }
+
+    @Test
+    void resolvesExecutableBeforeRejectingShellSymlinks() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Path link = Files.createSymbolicLink(temporaryDirectory.resolve("runner"), Path.of("/bin/sh"));
+        ProcessTool tool = tool(project, new TestVerifiedSandbox(), true, List.of());
+        ProcessToolRequest request = new ProcessToolRequest(
+                "shell-link",
+                link,
+                List.of("-c", "exit 0"),
                 Path.of("."),
                 Map.of(),
                 Duration.ofSeconds(5),
@@ -115,6 +159,18 @@ class ProcessToolTest {
                         "secret-arg",
                         Path.of("/usr/bin/curl"),
                         List.of("--token", "raw-value"),
+                        Path.of("."),
+                        Map.of(),
+                        Duration.ofSeconds(5),
+                        1024,
+                        ToolCapability.NETWORK_ACCESS,
+                        "network:any"));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new ProcessToolRequest(
+                        "secret-url",
+                        Path.of("/usr/bin/curl"),
+                        List.of("https://alice:hunter2@example.com/api"),
                         Path.of("."),
                         Map.of(),
                         Duration.ofSeconds(5),
@@ -158,12 +214,18 @@ class ProcessToolTest {
         Files.writeString(project.resolve(".oml/state.json"), "state");
         Files.createDirectories(project.resolve(".git"));
         Files.writeString(project.resolve(".env"), "TOKEN=secret");
+        Files.writeString(project.resolve(".npmrc"), "_auth=opaque");
+        Files.writeString(project.resolve(".netrc"), "password opaque");
+        Files.writeString(project.resolve("settings.xml"), "<password>opaque</password>");
         ProcessWorkspace workspace = ProcessWorkspace.create(project, "run-001", "copy-1");
 
         try {
             assertFalse(Files.exists(workspace.projectRoot().resolve(".oml")));
             assertFalse(Files.exists(workspace.projectRoot().resolve(".git")));
             assertFalse(Files.exists(workspace.projectRoot().resolve(".env")));
+            assertFalse(Files.exists(workspace.projectRoot().resolve(".npmrc")));
+            assertFalse(Files.exists(workspace.projectRoot().resolve(".netrc")));
+            assertFalse(Files.exists(workspace.projectRoot().resolve("settings.xml")));
         } finally {
             workspace.close();
         }
@@ -176,6 +238,7 @@ class ProcessToolTest {
             List<ToolPermissionGrant> grants) {
         ToolPermissionPolicy permissions = new ToolPermissionPolicy(
                 new PermissionGrantLedger(grants),
+                project,
                 autonomous,
                 CLOCK);
         return new ProcessTool(project, "run-001", permissions, sandbox);

@@ -26,16 +26,7 @@ public final class ProcessToolNode implements Node {
         this.tool = Objects.requireNonNull(tool, "tool");
         this.request = Objects.requireNonNull(request, "request");
         this.artifacts = Objects.requireNonNull(artifacts, "artifacts");
-        this.fingerprint = "process-tool:v1:" + ToolNodeSupport.fingerprint(
-                request.operationId()
-                        + "\0" + request.executable()
-                        + "\0" + request.arguments()
-                        + "\0" + request.workingDirectory()
-                        + "\0" + new java.util.TreeMap<>(request.environment())
-                        + "\0" + request.timeout()
-                        + "\0" + request.maxOutputBytes()
-                        + "\0" + request.capability()
-                        + "\0" + request.permissionTarget());
+        this.fingerprint = "process-tool:v2:" + ToolNodeSupport.processRequestFingerprint(request);
     }
 
     @Override
@@ -78,14 +69,18 @@ public final class ProcessToolNode implements Node {
                 ? "timeout"
                 : result.permission().permission() == ToolPermission.DENY
                         ? "permission-denied"
-                        : "nonzero-exit";
+                        : !result.executed()
+                                ? "setup-failed"
+                                : "nonzero-exit";
         return ToolNodeSupport.result(
                 prefix(),
                 result.permission(),
                 success,
                 "process-tool",
                 failureCode,
-                result.executed() ? result.detail() : result.permission().reasonCode(),
+                result.permission().permission() == ToolPermission.ALLOW
+                        ? result.detail()
+                        : result.permission().reasonCode(),
                 details);
     }
 

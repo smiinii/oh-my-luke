@@ -11,7 +11,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 final class ToolNodeSupport {
     private ToolNodeSupport() {}
@@ -49,5 +51,53 @@ final class ToolNodeSupport {
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 is required by Java", impossible);
         }
+    }
+
+    static String processRequestFingerprint(ProcessToolRequest request) {
+        StringBuilder encoded = new StringBuilder();
+        append(encoded, request.operationId());
+        append(encoded, request.executable().toAbsolutePath().normalize().toString());
+        appendList(encoded, request.arguments());
+        append(encoded, request.workingDirectory().normalize().toString());
+        appendMap(encoded, request.environment());
+        append(encoded, request.timeout().toString());
+        append(encoded, Integer.toString(request.maxOutputBytes()));
+        append(encoded, request.capability().name());
+        return fingerprint(encoded.toString());
+    }
+
+    static String processPermissionTarget(ProcessToolRequest request, java.nio.file.Path realExecutable) {
+        StringBuilder encoded = new StringBuilder();
+        append(encoded, realExecutable.toString());
+        appendList(encoded, request.arguments());
+        append(encoded, request.workingDirectory().normalize().toString());
+        appendMap(encoded, request.environment());
+        String network = request.networkRequested() ? "network:any" : "network:none";
+        append(encoded, network);
+        return "process:"
+                + request.capability().name().toLowerCase(java.util.Locale.ROOT)
+                + ":"
+                + network
+                + ":sha256:"
+                + fingerprint(encoded.toString());
+    }
+
+    private static void appendList(StringBuilder target, List<String> values) {
+        target.append(values.size()).append(';');
+        values.forEach(value -> append(target, value));
+    }
+
+    private static void appendMap(StringBuilder target, Map<String, String> values) {
+        TreeMap<String, String> sorted = new TreeMap<>(values);
+        target.append(sorted.size()).append(';');
+        sorted.forEach((key, value) -> {
+            append(target, key);
+            append(target, value);
+        });
+    }
+
+    private static void append(StringBuilder target, String value) {
+        String nonNull = java.util.Objects.requireNonNull(value, "fingerprint value");
+        target.append(nonNull.length()).append(':').append(nonNull).append(';');
     }
 }

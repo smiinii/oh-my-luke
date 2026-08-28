@@ -1,19 +1,27 @@
 package io.ohmyluke.policy;
 
 import java.time.Clock;
+import java.nio.file.Path;
 import java.util.Objects;
 
 /** Evaluates hard invariants, friction-free defaults, remembered grants, and project autonomy. */
 public final class ToolPermissionPolicy implements ToolPermissionEvaluator {
     private final PermissionGrantLedger grantLedger;
+    private final String projectRoot;
     private final boolean autonomousProject;
     private final Clock clock;
 
     public ToolPermissionPolicy(
             PermissionGrantLedger grantLedger,
+            Path projectRoot,
             boolean autonomousProject,
             Clock clock) {
         this.grantLedger = Objects.requireNonNull(grantLedger, "grantLedger");
+        try {
+            this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot").toRealPath().toString();
+        } catch (java.io.IOException error) {
+            throw new IllegalArgumentException("projectRoot must exist and resolve safely", error);
+        }
         this.autonomousProject = autonomousProject;
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -21,6 +29,11 @@ public final class ToolPermissionPolicy implements ToolPermissionEvaluator {
     @Override
     public ToolPermissionDecision evaluate(ToolPermissionRequest request) {
         Objects.requireNonNull(request, "request");
+        if (!projectRoot.equals(request.projectRoot())) {
+            return ToolPermissionDecision.deny(
+                    "permission.project-mismatch",
+                    "The permission policy is bound to a different project");
+        }
         return switch (request.capability().defaultPermission()) {
             case DENY -> ToolPermissionDecision.deny(
                     "permission.invariant-deny",

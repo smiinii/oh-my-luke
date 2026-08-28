@@ -59,6 +59,50 @@ class MacOsSeatbeltSandboxTest {
     }
 
     @Test
+    void blocksAnotherFileInPrivateTmp() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Path secret = Files.createTempFile(Path.of("/private/tmp"), "oml-outside-", ".txt");
+        try {
+            Files.writeString(secret, "private-tmp-secret");
+            ProcessToolResult result = tool(project).execute(request(
+                    "cat-private-tmp",
+                    Path.of("/bin/cat"),
+                    List.of(secret.toString())));
+
+            org.junit.jupiter.api.Assertions.assertNotEquals(0, result.exitCode());
+            assertFalse(result.standardOutput().contains("private-tmp-secret"));
+        } finally {
+            Files.deleteIfExists(secret);
+        }
+    }
+
+    @Test
+    void deniesChildProcessCreationInsteadOfLeavingDescendantsBehind() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Path java = Path.of(System.getProperty("java.home"), "bin", "java").toRealPath();
+        ProcessToolRequest request = new ProcessToolRequest(
+                "spawn-child",
+                java,
+                List.of(
+                        "-cp",
+                        System.getProperty("java.class.path"),
+                        ProcessToolFixture.class.getName(),
+                        "spawn",
+                        java.toString()),
+                Path.of("."),
+                Map.of(),
+                Duration.ofSeconds(5),
+                4096,
+                ToolCapability.LOCAL_PROCESS,
+                "local");
+
+        ProcessToolResult result = tool(project).execute(request);
+
+        org.junit.jupiter.api.Assertions.assertNotEquals(0, result.exitCode());
+        assertFalse(result.timedOut());
+    }
+
+    @Test
     void blocksNetworkByDefaultAndEnablesItOnlyAfterAnExactGrant() throws Exception {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
         try (ExecutorService listener = Executors.newVirtualThreadPerTaskExecutor();
@@ -103,6 +147,7 @@ class MacOsSeatbeltSandboxTest {
                     System.currentTimeMillis() + 60_000);
             ToolPermissionPolicy permissions = new ToolPermissionPolicy(
                     new PermissionGrantLedger(List.of(grant)),
+                    project,
                     false,
                     Clock.systemUTC());
             ProcessTool allowedTool = new ProcessTool(
@@ -122,6 +167,7 @@ class MacOsSeatbeltSandboxTest {
     private static ProcessTool tool(Path project) {
         ToolPermissionPolicy permissions = new ToolPermissionPolicy(
                 new PermissionGrantLedger(List.of()),
+                project,
                 false,
                 Clock.systemUTC());
         return new ProcessTool(project, "run-001", permissions, new MacOsSeatbeltSandbox());

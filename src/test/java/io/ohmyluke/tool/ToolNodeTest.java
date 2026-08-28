@@ -29,7 +29,7 @@ class ToolNodeTest {
     @Test
     void fileNodeStoresContentAsAnArtifactAndReportsOneToolCall() throws IOException {
         Path source = Files.writeString(project.resolve("source.txt"), "content");
-        ToolPermissionPolicy permissions = permissions();
+        ToolPermissionPolicy permissions = permissions(project);
         FileToolNode node = new FileToolNode(
                 new NodeId("read"),
                 new FileTool(project, "run-001", permissions, Clock.systemUTC()),
@@ -50,7 +50,7 @@ class ToolNodeTest {
         Path outside = Files.writeString(
                 project.resolveSibling(project.getFileName() + "-outside.txt"),
                 "outside");
-        ToolPermissionPolicy permissions = permissions();
+        ToolPermissionPolicy permissions = permissions(project);
         FileToolNode node = new FileToolNode(
                 new NodeId("outside"),
                 new FileTool(project, "run-001", permissions, Clock.systemUTC()),
@@ -70,7 +70,7 @@ class ToolNodeTest {
         ProcessToolRequest request = javaRequest();
         ProcessToolNode node = new ProcessToolNode(
                 new NodeId("process"),
-                new ProcessTool(project, "run-001", permissions(), new TestSandbox()),
+                new ProcessTool(project, "run-001", permissions(project), new TestSandbox()),
                 request,
                 new ToolArtifactStore(project, "run-001"));
 
@@ -83,9 +83,59 @@ class ToolNodeTest {
         assertFalse(result.statePatch().updates().values().stream().anyMatch(value -> value.contains("ghp_")));
     }
 
-    private static ToolPermissionPolicy permissions() {
+    @Test
+    void processFingerprintUsesUnambiguousLengthPrefixedFields() {
+        ProcessTool tool = new ProcessTool(project, "run-001", permissions(project), new TestSandbox());
+        ToolArtifactStore artifacts = new ToolArtifactStore(project, "run-001");
+        ProcessToolNode combined = new ProcessToolNode(
+                new NodeId("combined"),
+                tool,
+                requestWithArguments("fingerprint-1", List.of("a, b")),
+                artifacts);
+        ProcessToolNode separate = new ProcessToolNode(
+                new NodeId("separate"),
+                tool,
+                requestWithArguments("fingerprint-1", List.of("a", "b")),
+                artifacts);
+
+        org.junit.jupiter.api.Assertions.assertNotEquals(combined.fingerprint(), separate.fingerprint());
+    }
+
+    @Test
+    void processSetupFailureHasItsOwnStructuredFailureCodeAndCause() {
+        ProcessSandbox failing = new ProcessSandbox() {
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String unavailableReason() {
+                return "";
+            }
+
+            @Override
+            public SandboxLaunch prepare(ProcessSandboxSpec specification) {
+                throw new ProcessToolException("fixture setup failure");
+            }
+        };
+        ProcessToolNode node = new ProcessToolNode(
+                new NodeId("setup"),
+                new ProcessTool(project, "run-001", permissions(project), failing),
+                javaRequest(),
+                new ToolArtifactStore(project, "run-001"));
+
+        NodeResult result = node.execute(new NodeContext(Map.of(), 0));
+
+        assertEquals(Outcome.FAILURE, result.outcome());
+        assertEquals("setup-failed", result.failureInfo().code());
+        assertTrue(result.failureInfo().cause().contains("Process setup failed safely"));
+    }
+
+    private static ToolPermissionPolicy permissions(Path project) {
         return new ToolPermissionPolicy(
                 new PermissionGrantLedger(List.of()),
+                project,
                 false,
                 Clock.systemUTC());
     }
@@ -103,6 +153,23 @@ class ToolNodeTest {
                         System.getProperty("java.class.path"),
                         ProcessToolFixture.class.getName(),
                         "secret"),
+                Path.of("."),
+                Map.of(),
+                Duration.ofSeconds(5),
+                4096,
+                ToolCapability.LOCAL_PROCESS,
+                "local");
+    }
+
+    private static ProcessToolRequest requestWithArguments(String operationId, List<String> arguments) {
+        Path java = Path.of(
+                System.getProperty("java.home"),
+                "bin",
+                System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java");
+        return new ProcessToolRequest(
+                operationId,
+                java,
+                arguments,
                 Path.of("."),
                 Map.of(),
                 Duration.ofSeconds(5),

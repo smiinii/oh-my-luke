@@ -3,10 +3,13 @@ package io.ohmyluke.tool;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import io.ohmyluke.policy.ToolCapability;
+import io.ohmyluke.policy.ToolPermissionRequest;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -15,19 +18,30 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.DosFileAttributeView;
+import java.nio.file.attribute.DosFileAttributes;
+import java.nio.file.attribute.PosixFilePermission;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
-/** Stores complete pre-mutation snapshots under OML-owned state and restores them on demand. */
-public final class FileCheckpointStore {
-    private static final int SCHEMA_VERSION = 1;
+/** Trusted, immutable pre-mutation snapshots used only by the structured file tool. */
+final class FileCheckpointStore {
+    private static final int SCHEMA_VERSION = 2;
     private static final int MAX_FILES = 1_000;
     private static final long MAX_BYTES = 32L * 1024 * 1024;
+    private static final long MAX_MANIFEST_BYTES = 48L * 1024 * 1024;
+    private static final int INTEGRITY_KEY_BYTES = 32;
+    private static final String INTEGRITY_KEY_FILE = "file-checkpoint-integrity.key";
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     private final Path projectRoot;
@@ -35,7 +49,7 @@ public final class FileCheckpointStore {
     private final Path checkpointRoot;
     private final ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
-    public FileCheckpointStore(Path projectRoot, String runId) {
+    FileCheckpointStore(Path projectRoot, String runId) {
         try {
             this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot").toRealPath();
         } catch (IOException error) {
@@ -48,35 +62,46 @@ public final class FileCheckpointStore {
                 .resolve("file-checkpoints");
     }
 
-    public String capture(String operationId, List<Path> roots) {
-        String checkpointId = validateId(operationId, "operationId");
-        List<Path> normalizedRoots = List.copyOf(new java.util.LinkedHashSet<>(Objects.requireNonNull(roots, "roots")))
-                .stream()
-                .map(path -> Objects.requireNonNull(path, "checkpoint path").toAbsolutePath().normalize())
-                .toList();
-        if (normalizedRoots.isEmpty()) {
-            throw new IllegalArgumentException("roots must not be empty");
+    String capture(FileToolRequest operation, ToolPermissionRequest permission, List<Path> roots) {
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(permission, "permission");
+        String checkpointId = validateId(operation.operationId(), "operationId");
+        List<Path> normalizedRoots = normalizeRoots(roots);
+        validateRootShape(operation.operation(), normalizedRoots);
+        validateBinding(operation, permission, normalizedRoots);
+
+        Path target = checkpointPath(checkpointId);
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            validateSameRequest(loadValidated(checkpointId), operation, permission, normalizedRoots);
+            return checkpointId;
         }
+
         SnapshotCollector collector = new SnapshotCollector();
-        for (Path root : normalizedRoots) {
-            collector.capture(root);
-        }
-        FileCheckpoint checkpoint = new FileCheckpoint(
+        normalizedRoots.forEach(collector::capture);
+        FileCheckpoint unsigned = new FileCheckpoint(
                 SCHEMA_VERSION,
                 checkpointId,
+                projectRoot.toString(),
+                runId,
+                operation.operation(),
+                permission.capability(),
+                permission.target(),
+                requestFingerprint(operation, normalizedRoots),
                 normalizedRoots.stream().map(Path::toString).toList(),
-                collector.snapshots());
-        writeAtomically(checkpointPath(checkpointId), encode(checkpoint));
+                collector.snapshots(),
+                "");
+        FileCheckpoint checkpoint = withIntegrity(unsigned, sign(unsigned, true));
+        validateCheckpoint(checkpoint);
+        try {
+            writeAtomicallyNew(target, encode(checkpoint));
+        } catch (CheckpointAlreadyExists ignored) {
+            validateSameRequest(loadValidated(checkpointId), operation, permission, normalizedRoots);
+        }
         return checkpointId;
     }
 
-    public void restore(String checkpointId) {
-        String validated = validateId(checkpointId, "checkpointId");
-        FileCheckpoint checkpoint = decode(read(checkpointPath(validated)));
-        if (checkpoint.schemaVersion() != SCHEMA_VERSION || !checkpoint.checkpointId().equals(validated)) {
-            throw new FileCheckpointException("invalid file checkpoint identity or schema");
-        }
-
+    void restore(String checkpointId) {
+        FileCheckpoint checkpoint = loadValidated(validateId(checkpointId, "checkpointId"));
         List<Path> roots = checkpoint.roots().stream().map(Path::of).toList();
         for (Path root : roots) {
             rejectSymlinkComponents(root);
@@ -89,10 +114,213 @@ public final class FileCheckpointStore {
         checkpoint.snapshots().stream()
                 .filter(snapshot -> snapshot.type() == SnapshotType.FILE)
                 .forEach(snapshot -> writeFile(Path.of(snapshot.path()), snapshot.content()));
+        checkpoint.snapshots().stream()
+                .filter(snapshot -> snapshot.type() == SnapshotType.FILE)
+                .forEach(snapshot -> applyMetadata(Path.of(snapshot.path()), snapshot));
+        checkpoint.snapshots().stream()
+                .filter(snapshot -> snapshot.type() == SnapshotType.DIRECTORY)
+                .sorted(Comparator.comparingInt(
+                                (FileSnapshot snapshot) -> Path.of(snapshot.path()).getNameCount())
+                        .reversed())
+                .forEach(snapshot -> applyMetadata(Path.of(snapshot.path()), snapshot));
     }
 
-    public Path checkpointPath(String checkpointId) {
+    Path checkpointPath(String checkpointId) {
         return checkpointRoot.resolve(validateId(checkpointId, "checkpointId") + ".json");
+    }
+
+    private FileCheckpoint loadValidated(String checkpointId) {
+        Path path = checkpointPath(checkpointId);
+        if (Files.isSymbolicLink(path)) {
+            throw new FileCheckpointException("file checkpoint must not be a symbolic link");
+        }
+        FileCheckpoint checkpoint = decode(readBounded(path));
+        if (!checkpoint.checkpointId().equals(checkpointId)) {
+            throw new FileCheckpointException("invalid file checkpoint identity");
+        }
+        validateCheckpoint(checkpoint);
+        return checkpoint;
+    }
+
+    private void validateCheckpoint(FileCheckpoint checkpoint) {
+        if (checkpoint.schemaVersion() != SCHEMA_VERSION
+                || !checkpoint.projectRoot().equals(projectRoot.toString())
+                || !checkpoint.runId().equals(runId)) {
+            throw new FileCheckpointException("checkpoint schema, project, or run does not match");
+        }
+        String expectedIntegrity = sign(withIntegrity(checkpoint, ""), false);
+        if (!MessageDigest.isEqual(
+                expectedIntegrity.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                checkpoint.integrity().getBytes(java.nio.charset.StandardCharsets.US_ASCII))) {
+            throw new FileCheckpointException("file checkpoint integrity verification failed");
+        }
+        new ToolPermissionRequest(
+                checkpoint.checkpointId(),
+                checkpoint.runId(),
+                projectRoot,
+                checkpoint.capability(),
+                checkpoint.permissionTarget());
+        List<Path> roots = normalizeRoots(checkpoint.roots().stream().map(Path::of).toList());
+        validateRootShape(checkpoint.operation(), roots);
+        validateSafeRoots(roots);
+        validateTarget(checkpoint.operation(), checkpoint.permissionTarget(), roots);
+
+        if (checkpoint.snapshots().size() > MAX_FILES) {
+            throw new FileCheckpointException("file checkpoint exceeds " + MAX_FILES + " entries");
+        }
+        Set<Path> snapshotPaths = new HashSet<>();
+        Set<Path> rootSnapshots = new HashSet<>();
+        long bytes = 0;
+        for (FileSnapshot snapshot : checkpoint.snapshots()) {
+            Path path = normalizedAbsolute(snapshot.path(), "snapshot path");
+            if (!snapshotPaths.add(path)) {
+                throw new FileCheckpointException("duplicate snapshot path: " + path);
+            }
+            Path containingRoot = roots.stream()
+                    .filter(path::startsWith)
+                    .findFirst()
+                    .orElseThrow(() -> new FileCheckpointException(
+                            "snapshot escapes checkpoint roots: " + path));
+            if (path.equals(containingRoot)) {
+                rootSnapshots.add(path);
+            } else if (snapshot.type() == SnapshotType.MISSING) {
+                throw new FileCheckpointException("only a checkpoint root may be missing");
+            }
+            bytes += snapshot.content().length;
+            if (bytes > MAX_BYTES) {
+                throw new FileCheckpointException("file checkpoint exceeds " + MAX_BYTES + " bytes");
+            }
+            validatePermissions(snapshot.posixPermissions());
+            Objects.requireNonNull(snapshot.dosAttributes(), "DOS attributes");
+        }
+        if (!rootSnapshots.containsAll(roots)) {
+            throw new FileCheckpointException("every checkpoint root needs an exact snapshot");
+        }
+        validateCapability(checkpoint, roots);
+    }
+
+    private void validateBinding(
+            FileToolRequest operation,
+            ToolPermissionRequest permission,
+            List<Path> roots) {
+        if (!permission.operationId().equals(operation.operationId())
+                || !permission.runId().equals(runId)
+                || !permission.projectRoot().equals(projectRoot.toString())) {
+            throw new FileCheckpointException("checkpoint request is not bound to this project and run");
+        }
+        validateSafeRoots(roots);
+        validateTarget(operation.operation(), permission.target(), roots);
+    }
+
+    private void validateSameRequest(
+            FileCheckpoint existing,
+            FileToolRequest operation,
+            ToolPermissionRequest permission,
+            List<Path> roots) {
+        if (existing.operation() != operation.operation()
+                || existing.capability() != permission.capability()
+                || !existing.permissionTarget().equals(permission.target())
+                || !existing.requestFingerprint().equals(requestFingerprint(operation, roots))
+                || !existing.roots().equals(roots.stream().map(Path::toString).toList())) {
+            throw new FileCheckpointException(
+                    "operationId is already bound to a different immutable file checkpoint");
+        }
+    }
+
+    private void validateCapability(FileCheckpoint checkpoint, List<Path> roots) {
+        ToolCapability expected;
+        if (roots.stream().anyMatch(root -> !root.startsWith(projectRoot))) {
+            expected = ToolCapability.OUTSIDE_PROJECT_ACCESS;
+        } else {
+            expected = switch (checkpoint.operation()) {
+                case WRITE, CREATE_DIRECTORY, MOVE -> ToolCapability.PROJECT_WRITE;
+                case DELETE -> rootSnapshot(checkpoint, roots.getFirst()).type() == SnapshotType.DIRECTORY
+                        ? ToolCapability.BULK_DELETE
+                        : ToolCapability.PROJECT_DELETE;
+                case READ -> throw new FileCheckpointException("read operations must not create checkpoints");
+            };
+        }
+        if (checkpoint.capability() != expected) {
+            throw new FileCheckpointException("checkpoint capability does not match its paths and operation");
+        }
+    }
+
+    private static FileSnapshot rootSnapshot(FileCheckpoint checkpoint, Path root) {
+        return checkpoint.snapshots().stream()
+                .filter(snapshot -> Path.of(snapshot.path()).equals(root))
+                .findFirst()
+                .orElseThrow(() -> new FileCheckpointException("checkpoint root snapshot is missing"));
+    }
+
+    private void validateSafeRoots(List<Path> roots) {
+        for (Path root : roots) {
+            if (root.equals(projectRoot)
+                    || FilePathPolicy.touchesProjectDirectory(projectRoot, root, ".oml")
+                    || FilePathPolicy.touchesProjectDirectory(projectRoot, root, ".git")
+                    || FilePathPolicy.isSensitive(root)
+                    || FilePathPolicy.isProtectedSystemPath(root)) {
+                throw new FileCheckpointException("unsafe checkpoint root: " + root);
+            }
+            rejectSymlinkComponents(root);
+        }
+    }
+
+    private static void validateRootShape(FileOperation operation, List<Path> roots) {
+        int expected = operation == FileOperation.MOVE ? 2 : 1;
+        if (operation == FileOperation.READ || roots.size() != expected) {
+            throw new FileCheckpointException("checkpoint roots do not match the file operation");
+        }
+        for (int left = 0; left < roots.size(); left++) {
+            for (int right = left + 1; right < roots.size(); right++) {
+                Path first = roots.get(left);
+                Path second = roots.get(right);
+                if (first.startsWith(second) || second.startsWith(first)) {
+                    throw new FileCheckpointException("checkpoint roots must not overlap");
+                }
+            }
+        }
+    }
+
+    private static void validateTarget(FileOperation operation, String target, List<Path> roots) {
+        String prefix = operation.name().toLowerCase(java.util.Locale.ROOT) + ":";
+        String expected = roots.size() == 1
+                ? prefix + roots.getFirst()
+                : prefix + roots.get(0) + "->" + roots.get(1);
+        if (!expected.equals(target)) {
+            throw new FileCheckpointException("checkpoint permission target does not match its roots");
+        }
+    }
+
+    private static List<Path> normalizeRoots(List<Path> roots) {
+        Objects.requireNonNull(roots, "roots");
+        List<Path> normalized = new ArrayList<>();
+        for (Path root : roots) {
+            normalized.add(normalizedAbsolute(
+                    Objects.requireNonNull(root, "checkpoint path").toString(),
+                    "checkpoint path"));
+        }
+        if (normalized.isEmpty() || new LinkedHashSet<>(normalized).size() != normalized.size()) {
+            throw new FileCheckpointException("checkpoint roots must be non-empty and unique");
+        }
+        return List.copyOf(normalized);
+    }
+
+    private static Path normalizedAbsolute(String value, String name) {
+        Objects.requireNonNull(value, name);
+        Path original = Path.of(value);
+        Path normalized = original.toAbsolutePath().normalize();
+        if (!original.isAbsolute() || !original.equals(normalized)) {
+            throw new FileCheckpointException(name + " must be an absolute normalized path");
+        }
+        return normalized;
+    }
+
+    private static String requestFingerprint(FileToolRequest operation, List<Path> roots) {
+        String contentHash = ToolNodeSupport.fingerprint(
+                java.util.HexFormat.of().formatHex(operation.content()));
+        return ToolNodeSupport.fingerprint(operation.operation().name()
+                + "\0" + roots.stream().map(Path::toString).toList()
+                + "\0" + contentHash);
     }
 
     private String encode(FileCheckpoint checkpoint) {
@@ -103,23 +331,95 @@ public final class FileCheckpointStore {
         }
     }
 
+    private FileCheckpoint withIntegrity(FileCheckpoint source, String integrity) {
+        return new FileCheckpoint(
+                source.schemaVersion(),
+                source.checkpointId(),
+                source.projectRoot(),
+                source.runId(),
+                source.operation(),
+                source.capability(),
+                source.permissionTarget(),
+                source.requestFingerprint(),
+                source.roots(),
+                source.snapshots(),
+                integrity);
+    }
+
+    private String sign(FileCheckpoint checkpoint, boolean createKey) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(integrityKey(createKey), "HmacSHA256"));
+            byte[] payload = mapper.writeValueAsBytes(checkpoint);
+            return java.util.HexFormat.of().formatHex(mac.doFinal(payload));
+        } catch (java.security.GeneralSecurityException | JsonProcessingException error) {
+            throw new FileCheckpointException("failed to verify checkpoint integrity", error);
+        }
+    }
+
+    private byte[] integrityKey(boolean create) {
+        Path oml = projectRoot.resolve(".oml");
+        Path keyPath = oml.resolve(INTEGRITY_KEY_FILE);
+        try {
+            if (Files.isSymbolicLink(oml) || Files.isSymbolicLink(keyPath)) {
+                throw new FileCheckpointException("checkpoint integrity key path must not be a symbolic link");
+            }
+            if (Files.notExists(keyPath, LinkOption.NOFOLLOW_LINKS)) {
+                if (!create) {
+                    throw new FileCheckpointException("checkpoint integrity key is missing");
+                }
+                Files.createDirectories(oml);
+                byte[] generated = new byte[INTEGRITY_KEY_BYTES];
+                new SecureRandom().nextBytes(generated);
+                try {
+                    Files.write(keyPath, generated, StandardOpenOption.CREATE_NEW, LinkOption.NOFOLLOW_LINKS);
+                    restrictToCurrentUser(keyPath);
+                    return generated;
+                } catch (FileAlreadyExistsException ignored) {
+                    // Another trusted OML process won key creation; read that durable key below.
+                }
+            }
+            byte[] existing = Files.readAllBytes(keyPath);
+            if (existing.length != INTEGRITY_KEY_BYTES) {
+                throw new FileCheckpointException("checkpoint integrity key has an invalid size");
+            }
+            return existing;
+        } catch (IOException error) {
+            throw new FileCheckpointException("failed to load checkpoint integrity key", error);
+        }
+    }
+
+    private static void restrictToCurrentUser(Path path) throws IOException {
+        try {
+            Files.setPosixFilePermissions(path, Set.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE));
+        } catch (UnsupportedOperationException ignored) {
+            // Native ACL inheritance is the non-POSIX fallback.
+        }
+    }
+
     private FileCheckpoint decode(String json) {
         try {
             return mapper.readValue(json, FileCheckpoint.class);
-        } catch (JsonProcessingException error) {
+        } catch (JsonProcessingException | IllegalArgumentException error) {
             throw new FileCheckpointException("failed to decode file checkpoint", error);
         }
     }
 
-    private static String read(Path path) {
+    private static String readBounded(Path path) {
         try {
+            long size = Files.size(path);
+            if (size > MAX_MANIFEST_BYTES) {
+                throw new FileCheckpointException("file checkpoint manifest is too large");
+            }
             return Files.readString(path);
         } catch (IOException error) {
             throw new FileCheckpointException("failed to read file checkpoint: " + path, error);
         }
     }
 
-    private void writeAtomically(Path target, String content) {
+    private void writeAtomicallyNew(Path target, String content) {
         Path temporary = null;
         try {
             createCheckpointDirectory();
@@ -136,10 +436,15 @@ public final class FileCheckpointStore {
                 channel.force(true);
             }
             try {
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+                temporary = null;
+            } catch (FileAlreadyExistsException error) {
+                throw new CheckpointAlreadyExists();
             } catch (AtomicMoveNotSupportedException error) {
-                throw new FileCheckpointException("atomic checkpoint replacement is unavailable", error);
+                throw new FileCheckpointException("atomic checkpoint creation is unavailable", error);
             }
+        } catch (CheckpointAlreadyExists error) {
+            throw error;
         } catch (IOException error) {
             throw new FileCheckpointException("failed to write file checkpoint", error);
         } finally {
@@ -245,6 +550,84 @@ public final class FileCheckpointStore {
         }
     }
 
+    private static List<String> readPermissions(Path path) {
+        try {
+            return Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS).stream()
+                    .map(PosixFilePermission::name)
+                    .sorted()
+                    .toList();
+        } catch (IOException | UnsupportedOperationException ignored) {
+            return List.of();
+        }
+    }
+
+    private static void applyPermissions(Path path, List<String> names) {
+        if (names.isEmpty()) {
+            return;
+        }
+        Set<PosixFilePermission> permissions = new HashSet<>();
+        names.forEach(name -> permissions.add(PosixFilePermission.valueOf(name)));
+        try {
+            Files.setPosixFilePermissions(path, permissions);
+        } catch (IOException | UnsupportedOperationException error) {
+            throw new FileCheckpointException("failed to restore file permissions: " + path, error);
+        }
+    }
+
+    private static void applyMetadata(Path path, FileSnapshot snapshot) {
+        applyPermissions(path, snapshot.posixPermissions());
+        DosSnapshot attributes = snapshot.dosAttributes();
+        if (!attributes.present()) {
+            return;
+        }
+        DosFileAttributeView view = Files.getFileAttributeView(
+                path,
+                DosFileAttributeView.class,
+                LinkOption.NOFOLLOW_LINKS);
+        if (view == null) {
+            throw new FileCheckpointException("DOS attributes cannot be restored on this filesystem: " + path);
+        }
+        try {
+            view.setArchive(attributes.archive());
+            view.setHidden(attributes.hidden());
+            view.setSystem(attributes.system());
+            view.setReadOnly(attributes.readOnly());
+        } catch (IOException error) {
+            throw new FileCheckpointException("failed to restore DOS attributes: " + path, error);
+        }
+    }
+
+    private static DosSnapshot readDosAttributes(Path path) {
+        try {
+            DosFileAttributes attributes = Files.readAttributes(
+                    path,
+                    DosFileAttributes.class,
+                    LinkOption.NOFOLLOW_LINKS);
+            return new DosSnapshot(
+                    true,
+                    attributes.isReadOnly(),
+                    attributes.isHidden(),
+                    attributes.isSystem(),
+                    attributes.isArchive());
+        } catch (IOException | UnsupportedOperationException ignored) {
+            return DosSnapshot.unsupported();
+        }
+    }
+
+    private static void validatePermissions(List<String> names) {
+        Set<String> unique = new HashSet<>();
+        for (String name : names) {
+            try {
+                PosixFilePermission.valueOf(name);
+            } catch (IllegalArgumentException error) {
+                throw new FileCheckpointException("invalid POSIX permission in checkpoint", error);
+            }
+            if (!unique.add(name)) {
+                throw new FileCheckpointException("duplicate POSIX permission in checkpoint");
+            }
+        }
+    }
+
     private static String validateId(String value, String name) {
         Objects.requireNonNull(value, name);
         if (!SAFE_ID.matcher(value).matches()) {
@@ -253,25 +636,50 @@ public final class FileCheckpointStore {
         return value;
     }
 
-    public record FileCheckpoint(
+    record FileCheckpoint(
             int schemaVersion,
             String checkpointId,
+            String projectRoot,
+            String runId,
+            FileOperation operation,
+            ToolCapability capability,
+            String permissionTarget,
+            String requestFingerprint,
             List<String> roots,
-            List<FileSnapshot> snapshots) {
-        public FileCheckpoint {
+            List<FileSnapshot> snapshots,
+            String integrity) {
+        FileCheckpoint {
             checkpointId = validateId(checkpointId, "checkpointId");
+            projectRoot = Objects.requireNonNull(projectRoot, "projectRoot");
+            runId = validateId(runId, "runId");
+            Objects.requireNonNull(operation, "operation");
+            Objects.requireNonNull(capability, "capability");
+            permissionTarget = Objects.requireNonNull(permissionTarget, "permissionTarget");
+            requestFingerprint = Objects.requireNonNull(requestFingerprint, "requestFingerprint");
             roots = List.copyOf(Objects.requireNonNull(roots, "roots"));
             snapshots = List.copyOf(Objects.requireNonNull(snapshots, "snapshots"));
+            integrity = Objects.requireNonNull(integrity, "integrity");
         }
     }
 
-    public record FileSnapshot(String path, SnapshotType type, byte[] content) {
-        public FileSnapshot {
+    record FileSnapshot(
+            String path,
+            SnapshotType type,
+            byte[] content,
+            List<String> posixPermissions,
+            DosSnapshot dosAttributes) {
+        FileSnapshot {
             Objects.requireNonNull(path, "path");
             Objects.requireNonNull(type, "type");
             content = content == null ? new byte[0] : java.util.Arrays.copyOf(content, content.length);
+            posixPermissions = posixPermissions == null ? List.of() : List.copyOf(posixPermissions);
+            dosAttributes = dosAttributes == null ? DosSnapshot.unsupported() : dosAttributes;
             if (type != SnapshotType.FILE && content.length > 0) {
                 throw new IllegalArgumentException(type + " snapshot must not contain bytes");
+            }
+            if (type == SnapshotType.MISSING
+                    && (!posixPermissions.isEmpty() || dosAttributes.present())) {
+                throw new IllegalArgumentException("missing snapshot must not contain metadata");
             }
         }
 
@@ -281,10 +689,16 @@ public final class FileCheckpointStore {
         }
     }
 
-    public enum SnapshotType {
+    enum SnapshotType {
         MISSING,
         DIRECTORY,
         FILE
+    }
+
+    record DosSnapshot(boolean present, boolean readOnly, boolean hidden, boolean system, boolean archive) {
+        static DosSnapshot unsupported() {
+            return new DosSnapshot(false, false, false, false, false);
+        }
     }
 
     private static final class SnapshotCollector {
@@ -294,22 +708,21 @@ public final class FileCheckpointStore {
 
         void capture(Path root) {
             Path normalized = root.toAbsolutePath().normalize();
-            if (!seen.add(normalized)) {
-                return;
-            }
             rejectSymlinkComponents(normalized);
             if (Files.notExists(normalized, LinkOption.NOFOLLOW_LINKS)) {
-                add(new FileSnapshot(normalized.toString(), SnapshotType.MISSING, null));
+                add(new FileSnapshot(
+                        normalized.toString(),
+                        SnapshotType.MISSING,
+                        null,
+                        List.of(),
+                        DosSnapshot.unsupported()));
                 return;
             }
             try {
                 Files.walkFileTree(normalized, new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
-                        add(new FileSnapshot(
-                                directory.toAbsolutePath().normalize().toString(),
-                                SnapshotType.DIRECTORY,
-                                null));
+                        addSnapshot(directory, SnapshotType.DIRECTORY, null);
                         return FileVisitResult.CONTINUE;
                     }
 
@@ -318,21 +731,35 @@ public final class FileCheckpointStore {
                         if (attributes.isSymbolicLink() || !attributes.isRegularFile()) {
                             throw new FileCheckpointException("unsupported file type in checkpoint: " + file);
                         }
-                        byte[] content = Files.readAllBytes(file);
-                        bytes += content.length;
-                        if (bytes > MAX_BYTES) {
+                        long size = attributes.size();
+                        if (size < 0 || size > MAX_BYTES - bytes) {
                             throw new FileCheckpointException("file checkpoint exceeds " + MAX_BYTES + " bytes");
                         }
-                        add(new FileSnapshot(
-                                file.toAbsolutePath().normalize().toString(),
-                                SnapshotType.FILE,
-                                content));
+                        byte[] content = Files.readAllBytes(file);
+                        if (content.length != size) {
+                            throw new FileCheckpointException("file changed while its checkpoint was captured: " + file);
+                        }
+                        bytes += content.length;
+                        addSnapshot(file, SnapshotType.FILE, content);
                         return FileVisitResult.CONTINUE;
                     }
                 });
             } catch (IOException error) {
                 throw new FileCheckpointException("failed to capture path: " + normalized, error);
             }
+        }
+
+        private void addSnapshot(Path path, SnapshotType type, byte[] content) {
+            Path normalized = path.toAbsolutePath().normalize();
+            if (!seen.add(normalized)) {
+                throw new FileCheckpointException("duplicate snapshot path: " + normalized);
+            }
+            add(new FileSnapshot(
+                    normalized.toString(),
+                    type,
+                    content,
+                    readPermissions(path),
+                    readDosAttributes(path)));
         }
 
         private void add(FileSnapshot snapshot) {
@@ -346,4 +773,6 @@ public final class FileCheckpointStore {
             return List.copyOf(snapshots);
         }
     }
+
+    private static final class CheckpointAlreadyExists extends RuntimeException {}
 }

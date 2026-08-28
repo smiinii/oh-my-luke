@@ -1,7 +1,9 @@
 package io.ohmyluke.policy;
 
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /** Model-independent description of the capability and exact target a tool wants to use. */
 public record ToolPermissionRequest(
@@ -10,6 +12,8 @@ public record ToolPermissionRequest(
         String projectRoot,
         ToolCapability capability,
         String target) {
+    private static final Pattern CREDENTIAL_PARAMETER = Pattern.compile(
+            "(?i)(?:^|[?&;,\\s])(?:api[_-]?key|token|secret|password|passwd|authorization|auth|cookie|credential)\\s*=");
     public ToolPermissionRequest(
             String operationId,
             String runId,
@@ -27,9 +31,10 @@ public record ToolPermissionRequest(
     public ToolPermissionRequest {
         operationId = requireText(operationId, "operationId");
         runId = requireText(runId, "runId");
-        projectRoot = requireText(projectRoot, "projectRoot");
+        projectRoot = normalizeProjectRoot(Path.of(requireText(projectRoot, "projectRoot")));
         Objects.requireNonNull(capability, "capability");
         target = requireText(target, "target");
+        rejectCredentials(target);
     }
 
     private static String normalizeProjectRoot(Path projectRoot) {
@@ -38,8 +43,29 @@ public record ToolPermissionRequest(
                 .normalize();
         try {
             return normalized.toRealPath().toString();
-        } catch (java.io.IOException ignored) {
-            return normalized.toString();
+        } catch (java.io.IOException error) {
+            throw new IllegalArgumentException("projectRoot must exist and resolve safely", error);
+        }
+    }
+
+    private static void rejectCredentials(String target) {
+        if (CREDENTIAL_PARAMETER.matcher(target).find()) {
+            throw new IllegalArgumentException("target must not contain credential parameters");
+        }
+        String lower = target.toLowerCase(Locale.ROOT);
+        int scheme = lower.indexOf("://");
+        if (scheme >= 0) {
+            int authorityStart = scheme + 3;
+            int authorityEnd = target.length();
+            for (char delimiter : new char[] {'/', '?', '#'}) {
+                int index = target.indexOf(delimiter, authorityStart);
+                if (index >= 0) {
+                    authorityEnd = Math.min(authorityEnd, index);
+                }
+            }
+            if (target.substring(authorityStart, authorityEnd).contains("@")) {
+                throw new IllegalArgumentException("target must not contain URL user-info");
+            }
         }
     }
 

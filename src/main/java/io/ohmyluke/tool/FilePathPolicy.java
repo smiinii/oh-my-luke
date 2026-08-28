@@ -13,7 +13,18 @@ import java.util.Set;
 /** Classifies exact file targets and rejects symlink, secret, OML, and protected-system access. */
 final class FilePathPolicy {
     private static final Set<String> SECRET_NAMES = Set.of(
-            ".env", "id_rsa", "id_ed25519", "credentials", "hosts.yml");
+            ".env",
+            ".npmrc",
+            ".netrc",
+            ".pypirc",
+            "settings.xml",
+            "credentials",
+            "credentials.json",
+            "service-account.json",
+            "docker-config.json",
+            "id_rsa",
+            "id_ed25519",
+            "hosts.yml");
     private static final List<String> SECRET_SUFFIXES = List.of(".pem", ".key", ".p12", ".pfx");
 
     private final Path configuredRoot;
@@ -100,10 +111,14 @@ final class FilePathPolicy {
     }
 
     private boolean touchesGit(Path path) {
-        return startsWithProjectDirectory(path, ".git");
+        return touchesProjectDirectory(projectRoot, path, ".git");
     }
 
     private boolean startsWithProjectDirectory(Path path, String directory) {
+        return touchesProjectDirectory(projectRoot, path, directory);
+    }
+
+    static boolean touchesProjectDirectory(Path projectRoot, Path path, String directory) {
         if (!path.startsWith(projectRoot)) {
             return false;
         }
@@ -112,7 +127,7 @@ final class FilePathPolicy {
                 && relative.getName(0).toString().equalsIgnoreCase(directory);
     }
 
-    private static boolean isSensitive(Path path) {
+    static boolean isSensitive(Path path) {
         String normalized = path.toString().replace('\\', '/').toLowerCase(Locale.ROOT);
         String fileName = path.getFileName() == null
                 ? ""
@@ -136,7 +151,7 @@ final class FilePathPolicy {
                 || normalized.contains("/.config/gcloud/");
     }
 
-    private static boolean isProtectedSystemPath(Path path) {
+    static boolean isProtectedSystemPath(Path path) {
         String normalized = path.toAbsolutePath().normalize().toString().replace('\\', '/');
         String lower = normalized.toLowerCase(Locale.ROOT);
         if (lower.matches("^[a-z]:/windows(?:/.*)?$")

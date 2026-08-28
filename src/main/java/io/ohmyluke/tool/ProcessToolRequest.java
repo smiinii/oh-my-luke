@@ -38,6 +38,8 @@ public record ProcessToolRequest(
             Pattern.CASE_INSENSITIVE);
     private static final Pattern SENSITIVE_ARGUMENT_NAME = Pattern.compile(
             "(?i)^--?(token|secret|password|passwd|api[_-]?key|authorization|cookie|credential|private[_-]?key)(?:=.*)?$");
+    private static final Pattern CREDENTIAL_PARAMETER = Pattern.compile(
+            "(?i)(?:^|[?&;,\\s])(?:api[_-]?key|token|secret|password|passwd|authorization|auth|cookie|credential)\\s*=");
     private static final List<Pattern> SECRET_VALUES = List.of(
             Pattern.compile("gh[pousr]_[A-Za-z0-9_]{20,}"),
             Pattern.compile("sk-[A-Za-z0-9_-]{20,}"),
@@ -54,7 +56,8 @@ public record ProcessToolRequest(
             String argument = arguments.get(index);
             validateNul(argument, "argument");
             if (SENSITIVE_ARGUMENT_NAME.matcher(argument).matches()
-                    || containsSecretValue(argument)) {
+                    || containsSecretValue(argument)
+                    || containsCredentialSyntax(argument)) {
                 throw new IllegalArgumentException("raw credentials are not accepted in process arguments");
             }
         }
@@ -73,7 +76,7 @@ public record ProcessToolRequest(
             throw new IllegalArgumentException("unsupported process capability: " + capability);
         }
         permissionTarget = requireText(permissionTarget, "permissionTarget");
-        if (containsSecretValue(permissionTarget)) {
+        if (containsSecretValue(permissionTarget) || containsCredentialSyntax(permissionTarget)) {
             throw new IllegalArgumentException("permissionTarget must not contain a raw credential");
         }
     }
@@ -163,6 +166,25 @@ public record ProcessToolRequest(
             }
         }
         return false;
+    }
+
+    private static boolean containsCredentialSyntax(String value) {
+        if (CREDENTIAL_PARAMETER.matcher(value).find()) {
+            return true;
+        }
+        int scheme = value.indexOf("://");
+        if (scheme < 0) {
+            return false;
+        }
+        int start = scheme + 3;
+        int end = value.length();
+        for (char delimiter : new char[] {'/', '?', '#'}) {
+            int index = value.indexOf(delimiter, start);
+            if (index >= 0) {
+                end = Math.min(end, index);
+            }
+        }
+        return value.substring(start, end).contains("@");
     }
 
     private static void validateNul(String value, String name) {

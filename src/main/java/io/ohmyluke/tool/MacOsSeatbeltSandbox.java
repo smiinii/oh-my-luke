@@ -47,17 +47,24 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
         StringBuilder profile = new StringBuilder();
         profile.append("(version 1)\n");
         profile.append("(deny default)\n");
-        profile.append("(allow process*)\n");
+        profile.append("(allow process-exec (literal \"").append(executable).append("\"))\n");
         profile.append("(allow signal (target self))\n");
         profile.append("(allow sysctl-read)\n");
         profile.append("(allow mach-lookup)\n");
         profile.append("(allow ipc-posix-shm)\n");
         profile.append("(allow file-read*)\n");
-        for (String protectedRoot : List.of(
-                "/Users", "/home", "/root", "/Volumes", "/Network", "/private/var/folders")) {
-            if (Files.exists(Path.of(protectedRoot))) {
+        for (String userDataRoot : List.of(
+                "/Users",
+                "/home",
+                "/root",
+                "/Volumes",
+                "/Network",
+                "/private/tmp",
+                "/private/var/folders",
+                "/private/var/tmp")) {
+            if (Files.exists(Path.of(userDataRoot))) {
                 profile.append("(deny file-read* (subpath \"")
-                        .append(escape(protectedRoot))
+                        .append(escape(userDataRoot))
                         .append("\"))\n");
             }
         }
@@ -66,6 +73,7 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
         profile.append("(allow file-read* (subpath \"").append(home).append("\"))\n");
         profile.append("(allow file-write* (subpath \"").append(workspace).append("\"))\n");
         profile.append("(allow file-write* (subpath \"").append(home).append("\"))\n");
+        profile.append("(allow file-write* (literal \"/dev/null\"))\n");
         if (specification.networkAllowed()) {
             profile.append("(allow network*)\n");
         }

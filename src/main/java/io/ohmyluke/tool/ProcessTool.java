@@ -56,31 +56,39 @@ public final class ProcessTool {
 
     public ToolPermissionRequest permissionRequest(ProcessToolRequest request) {
         Objects.requireNonNull(request, "request");
+        Path executable = resolveExecutable(request.executable());
         return new ToolPermissionRequest(
                 request.operationId(),
                 runId,
                 projectRoot,
                 request.capability(),
-                request.permissionTarget());
+                ToolNodeSupport.processPermissionTarget(request, executable));
     }
 
     public ProcessToolResult execute(ProcessToolRequest request) {
         Objects.requireNonNull(request, "request");
-        if (isShell(request.executable())) {
-            return denied("process.shell-deny", "Shells and command wrappers are not accepted");
-        }
         if (!sandbox.available()) {
             return denied("sandbox.unavailable", sandbox.unavailableReason());
         }
 
-        ToolPermissionDecision permission = permissions.evaluate(permissionRequest(request));
-        if (permission.permission() != ToolPermission.ALLOW) {
-            return notExecuted(permission, permission.detail());
+        Path realExecutable;
+        try {
+            realExecutable = resolveExecutable(request.executable());
+        } catch (ProcessToolException error) {
+            return denied("process.executable-unresolved", error.getMessage());
+        }
+        if (isShell(realExecutable)) {
+            return denied("process.shell-deny", "Shells and command wrappers are not accepted");
         }
         if (request.capability() == io.ohmyluke.policy.ToolCapability.SECRET_USE) {
             return denied(
                     "process.credential-broker-required",
                     "Raw credentials are never injected; a scoped credential broker is required");
+        }
+        if (request.networkRequested() && !request.environment().isEmpty()) {
+            return denied(
+                    "process.credential-broker-required",
+                    "Networked processes cannot receive caller-provided environment values; use a scoped credential broker");
         }
         if (request.capability() == io.ohmyluke.policy.ToolCapability.DOCKER_ACCESS
                 || request.capability() == io.ohmyluke.policy.ToolCapability.OUTSIDE_PROJECT_ACCESS) {
@@ -89,9 +97,18 @@ public final class ProcessTool {
                     "The disposable process workspace does not expose host sockets or outside paths");
         }
 
+        ToolPermissionDecision permission = permissions.evaluate(new ToolPermissionRequest(
+                request.operationId(),
+                runId,
+                projectRoot,
+                request.capability(),
+                ToolNodeSupport.processPermissionTarget(request, realExecutable)));
+        if (permission.permission() != ToolPermission.ALLOW) {
+            return notExecuted(permission, permission.detail());
+        }
         long started = System.nanoTime();
         try (ProcessWorkspace workspace = ProcessWorkspace.create(projectRoot, runId, request.operationId())) {
-            Path executable = workspace.mapExecutable(request.executable());
+            Path executable = workspace.mapExecutable(realExecutable);
             Path workingDirectory = workspace.workingDirectory(request.workingDirectory());
             ProcessSandboxSpec specification = new ProcessSandboxSpec(
                     executable,
@@ -230,6 +247,18 @@ public final class ProcessTool {
         Path fileName = executable.getFileName();
         String name = fileName == null ? executable.toString() : fileName.toString();
         return SHELLS.contains(name.toLowerCase(Locale.ROOT));
+    }
+
+    private static Path resolveExecutable(Path executable) {
+        try {
+            Path real = Objects.requireNonNull(executable, "executable").toRealPath();
+            if (!Files.isRegularFile(real) || !Files.isExecutable(real)) {
+                throw new ProcessToolException("executable must be a regular executable file");
+            }
+            return real;
+        } catch (IOException error) {
+            throw new ProcessToolException("executable must exist and resolve safely", error);
+        }
     }
 
     private static ProcessToolResult denied(String code, String detail) {

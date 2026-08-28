@@ -45,6 +45,7 @@ public final class ProjectPermissionManager implements ToolPermissionEvaluator {
             int before = ledger.snapshot().size();
             ToolPermissionDecision decision = new ToolPermissionPolicy(
                             ledger,
+                            java.nio.file.Path.of(store.projectRoot()),
                             settings.autonomousProject(),
                             clock)
                     .evaluate(request);
@@ -64,6 +65,7 @@ public final class ProjectPermissionManager implements ToolPermissionEvaluator {
         Objects.requireNonNull(choice, "choice");
         ToolPermissionDecision baseline = new ToolPermissionPolicy(
                         new PermissionGrantLedger(List.of()),
+                        java.nio.file.Path.of(store.projectRoot()),
                         false,
                         clock)
                 .evaluate(request);

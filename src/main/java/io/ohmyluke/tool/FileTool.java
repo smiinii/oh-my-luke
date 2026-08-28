@@ -38,6 +38,7 @@ public final class FileTool {
         Objects.requireNonNull(request, "request");
         Path source = paths.resolve(request.path());
         Path destination = request.destination() == null ? null : paths.resolve(request.destination());
+        rejectOverlappingMove(request, source, destination);
         ToolCapability capability = paths.classify(request, source, destination);
         return new ToolPermissionRequest(
                 request.operationId(),
@@ -63,7 +64,24 @@ public final class FileTool {
 
         Path source = paths.resolve(request.path());
         Path destination = request.destination() == null ? null : paths.resolve(request.destination());
-        return perform(request, source, destination, decision);
+        ToolPermissionRequest verifiedRequest;
+        try {
+            rejectOverlappingMove(request, source, destination);
+            verifiedRequest = new ToolPermissionRequest(
+                    request.operationId(),
+                    runId,
+                    paths.projectRoot(),
+                    paths.classify(request, source, destination),
+                    paths.target(request, source, destination));
+        } catch (UnsafeFileRequestException | FileCheckpointException error) {
+            return denied("file.changed-before-execution", error.getMessage());
+        }
+        if (!permissionRequest.equals(verifiedRequest)) {
+            return denied(
+                    "file.permission-scope-changed",
+                    "The file target or risk class changed after approval; no mutation was performed");
+        }
+        return perform(request, source, destination, permissionRequest, decision);
     }
 
     public void restore(String checkpointId) {
@@ -74,13 +92,25 @@ public final class FileTool {
             FileToolRequest request,
             Path source,
             Path destination,
+            ToolPermissionRequest permissionRequest,
             ToolPermissionDecision decision) {
         if (request.operation() == FileOperation.READ) {
             return read(source, decision);
         }
-        String checkpointId = checkpoints.capture(
-                request.operationId(),
-                destination == null ? List.of(source) : List.of(source, destination));
+        String checkpointId;
+        try {
+            checkpointId = checkpoints.capture(
+                    request,
+                    permissionRequest,
+                    destination == null ? List.of(source) : List.of(source, destination));
+        } catch (RuntimeException error) {
+            return new FileToolResult(
+                    decision,
+                    false,
+                    null,
+                    null,
+                    "File checkpoint creation failed safely: " + error.getClass().getSimpleName());
+        }
         try {
             switch (request.operation()) {
                 case WRITE -> write(source, request.content());
@@ -151,6 +181,20 @@ public final class FileTool {
                 null,
                 null,
                 detail);
+    }
+
+    private static void rejectOverlappingMove(
+            FileToolRequest request,
+            Path source,
+            Path destination) {
+        if (request.operation() != FileOperation.MOVE) {
+            return;
+        }
+        if (source.startsWith(destination) || destination.startsWith(source)) {
+            throw new UnsafeFileRequestException(
+                    "file.overlapping-move",
+                    "Move source and destination must not be equal or contain one another");
+        }
     }
 
     private static String requireText(String value, String name) {

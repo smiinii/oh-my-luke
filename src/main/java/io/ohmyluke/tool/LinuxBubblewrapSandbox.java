@@ -36,6 +36,7 @@ public final class LinuxBubblewrapSandbox implements ProcessSandbox {
         command.add(bubblewrap.toString());
         command.addAll(List.of(
                 "--die-with-parent",
+                "--as-pid-1",
                 "--new-session",
                 "--unshare-pid",
                 "--unshare-uts",

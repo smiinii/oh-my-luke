@@ -13,6 +13,13 @@ public final class ProcessToolFixture {
             case "secret" -> System.out.print("TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234567890");
             case "large" -> System.out.print("x".repeat(Integer.parseInt(arguments[1])));
             case "sleep" -> Thread.sleep(Long.parseLong(arguments[1]));
+            case "spawn" -> {
+                Process child = new ProcessBuilder(arguments[1], "-version").start();
+                if (!child.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    child.destroyForcibly();
+                    throw new IllegalStateException("child process escaped the fixture timeout");
+                }
+            }
             default -> throw new IllegalArgumentException("unknown fixture mode");
         }
     }
