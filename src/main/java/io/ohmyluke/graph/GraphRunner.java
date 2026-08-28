@@ -85,7 +85,8 @@ public final class GraphRunner {
                     selected.to(),
                     selected.condition().description(),
                     result.statePatch(),
-                    stateAfter));
+                    stateAfter,
+                    result.failureInfo()));
             current = selected.to();
             path.add(current);
             status = nextStatus(graph, current, executedSteps);
@@ -144,7 +145,8 @@ public final class GraphRunner {
                 selected.to(),
                 selected.condition().description(),
                 result.statePatch(),
-                stateAfter));
+                stateAfter,
+                result.failureInfo()));
         List<NodeId> path = ImmutableAppendList.append(state.path(), selected.to());
 
         RunStatus status = nextStatus(graph, selected.to(), executedSteps);

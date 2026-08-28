@@ -220,7 +220,13 @@ public final class ManagedRunService {
 
         RunState updatedState = runner.step(prepared, checkpoint.state());
         TransitionEvent transition = updatedState.events().getLast();
-        FailureFingerprint failure = null;
+        FailureFingerprint failure = transition.failure() == null
+                ? null
+                : FailureFingerprint.normalized(
+                        transition.failure().type(),
+                        transition.failure().code(),
+                        transition.node().value(),
+                        transition.failure().cause());
         PolicyState observed = progressTracker.observe(
                 attempted,
                 new ProgressObservation(

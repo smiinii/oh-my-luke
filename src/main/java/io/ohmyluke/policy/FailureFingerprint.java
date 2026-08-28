@@ -32,7 +32,7 @@ public record FailureFingerprint(
     }
 
     private static String normalizeNode(String value) {
-        return requireText(value, "node").trim().replaceAll("\\s+", " ");
+        return requireText(value, "node").trim();
     }
 
     private static String requireText(String value, String name) {

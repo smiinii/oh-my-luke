@@ -7,6 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -82,14 +85,36 @@ class ProjectBoundaryPolicyTest {
     void deleteRequiresApprovalBoundToTheExactPathAndOperation() throws IOException {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path target = Files.writeString(project.resolve("target.txt"), "safe");
-        ProjectBoundaryPolicy policy = new ProjectBoundaryPolicy(project);
+        Instant now = Instant.parse("2026-08-28T00:00:00Z");
+        ProjectBoundaryPolicy policy = new ProjectBoundaryPolicy(
+                project,
+                "run-001",
+                Clock.fixed(now, ZoneOffset.UTC));
         FileApprovalGrant wrong = new FileApprovalGrant(
-                "approval-1", policy.projectRoot().toString(), "other.txt", FileAccess.DELETE);
+                "approval-1",
+                "run-001",
+                policy.projectRoot().toString(),
+                "other.txt",
+                FileAccess.DELETE,
+                now.plusSeconds(30).toEpochMilli());
         FileApprovalGrant exact = new FileApprovalGrant(
-                "approval-2", policy.projectRoot().toString(), "target.txt", FileAccess.DELETE);
+                "approval-2",
+                "run-001",
+                policy.projectRoot().toString(),
+                "target.txt",
+                FileAccess.DELETE,
+                now.plusSeconds(30).toEpochMilli());
+        FileApprovalGrant expired = new FileApprovalGrant(
+                "approval-3",
+                "run-001",
+                policy.projectRoot().toString(),
+                "target.txt",
+                FileAccess.DELETE,
+                now.toEpochMilli());
 
         assertEquals("boundary.approval-required", policy.evaluate(target, FileAccess.DELETE).reasonCode());
         assertEquals("boundary.approval-required", policy.evaluate(target, FileAccess.DELETE, wrong).reasonCode());
+        assertEquals("boundary.approval-required", policy.evaluate(target, FileAccess.DELETE, expired).reasonCode());
         assertEquals(PolicyOutcome.CONTINUE, policy.evaluate(target, FileAccess.DELETE, exact).outcome());
     }
 }

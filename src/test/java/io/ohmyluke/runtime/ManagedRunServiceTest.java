@@ -9,6 +9,7 @@ import io.ohmyluke.graph.Condition;
 import io.ohmyluke.graph.Edge;
 import io.ohmyluke.graph.GraphDefinition;
 import io.ohmyluke.graph.GraphExecutionException;
+import io.ohmyluke.graph.FailureInfo;
 import io.ohmyluke.graph.GraphRunner;
 import io.ohmyluke.graph.GraphValidator;
 import io.ohmyluke.graph.Node;
@@ -209,6 +210,43 @@ class ManagedRunServiceTest {
         assertEquals(
                 "limit.node-calls",
                 service.inspect("attempt-limit").policyState().lastDecision().reasonCode());
+    }
+
+    @Test
+    void repeatedStructuredNodeFailureStopsTheManagedRun() {
+        FailureInfo failure = new FailureInfo("validation", "tests-failed", "same assertion failed");
+        GraphDefinition graph = failureLoopGraph(context -> NodeResult.failure(failure), 10);
+        PolicyConfiguration configuration = new PolicyConfiguration(0, 0, 0, 0, 0, 3, 0);
+        ManagedRunService service = service(configuration);
+        service.start("repeated-failure", graph, handoff());
+
+        RunState stopped = service.resume("repeated-failure", graph);
+        RunInspection inspection = service.inspect("repeated-failure");
+
+        assertEquals(3, stopped.executedSteps());
+        assertEquals(3, inspection.policyState().repeatedFailureCount());
+        assertEquals(PolicyOutcome.BLOCKED, inspection.policyState().lastDecision().outcome());
+        assertEquals("failure.repeated", inspection.policyState().lastDecision().reasonCode());
+    }
+
+    @Test
+    void differentStructuredFailureResetsManagedRunRepetition() {
+        AtomicInteger attempts = new AtomicInteger();
+        GraphDefinition graph = failureLoopGraph(context -> {
+            int attempt = attempts.incrementAndGet();
+            String code = attempt < 3 ? "compile" : "test";
+            return NodeResult.failure(new FailureInfo("build", code, "failed"));
+        }, 10);
+        ManagedRunService service = service(new PolicyConfiguration(0, 0, 0, 0, 0, 3, 0));
+        service.start("different-failure", graph, handoff());
+
+        service.step("different-failure", graph);
+        service.step("different-failure", graph);
+        service.step("different-failure", graph);
+
+        RunInspection inspection = service.inspect("different-failure");
+        assertEquals(1, inspection.policyState().repeatedFailureCount());
+        assertEquals(PolicyOutcome.CONTINUE, inspection.policyState().lastDecision().outcome());
     }
 
     @Test
@@ -488,6 +526,22 @@ class ManagedRunServiceTest {
                 List.of(
                         new Edge(WORK, WORK, Condition.outcomeIs(Outcome.SUCCESS)),
                         new Edge(WORK, END, Condition.outcomeIs(Outcome.FAILURE)),
+                        new Edge(WORK, END, Condition.outcomeIs(Outcome.SKIPPED)),
+                        new Edge(WORK, END, Condition.outcomeIs(Outcome.CANCELLED))),
+                Set.of(END),
+                maxSteps);
+    }
+
+    private static GraphDefinition failureLoopGraph(
+            Function<NodeContext, NodeResult> action,
+            int maxSteps) {
+        Node node = new TestNode(WORK, action);
+        return new GraphDefinition(
+                WORK,
+                Set.of(node),
+                List.of(
+                        new Edge(WORK, END, Condition.outcomeIs(Outcome.SUCCESS)),
+                        new Edge(WORK, WORK, Condition.outcomeIs(Outcome.FAILURE)),
                         new Edge(WORK, END, Condition.outcomeIs(Outcome.SKIPPED)),
                         new Edge(WORK, END, Condition.outcomeIs(Outcome.CANCELLED))),
                 Set.of(END),

@@ -6,15 +6,28 @@ import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Clock;
 import java.util.Objects;
 
 /** Fail-closed path validation for one configured project root. */
 public final class ProjectBoundaryPolicy {
     private final Path configuredRoot;
     private final Path projectRoot;
+    private final String runId;
+    private final Clock clock;
 
     public ProjectBoundaryPolicy(Path projectRoot) {
+        this(projectRoot, "unscoped", Clock.systemUTC());
+    }
+
+    public ProjectBoundaryPolicy(Path projectRoot, String runId, Clock clock) {
         Objects.requireNonNull(projectRoot, "projectRoot");
+        Objects.requireNonNull(runId, "runId");
+        if (runId.isBlank()) {
+            throw new IllegalArgumentException("runId must not be blank");
+        }
+        this.runId = runId;
+        this.clock = Objects.requireNonNull(clock, "clock");
         this.configuredRoot = projectRoot.toAbsolutePath().normalize();
         try {
             this.projectRoot = projectRoot.toRealPath();
@@ -117,8 +130,10 @@ public final class ProjectBoundaryPolicy {
             Path relative,
             FileAccess access) {
         return approval != null
+                && approval.runId().equals(runId)
                 && approval.projectRoot().equals(projectRoot.toString())
                 && approval.relativePath().equals(relative.toString())
-                && approval.access() == access;
+                && approval.access() == access
+                && approval.expiresAtEpochMilli() > clock.millis();
     }
 }
