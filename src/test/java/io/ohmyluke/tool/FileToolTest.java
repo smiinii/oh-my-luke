@@ -52,11 +52,11 @@ class FileToolTest {
         FileToolResult delete = tool.execute(FileToolRequest.delete("delete-1", source));
 
         assertEquals(ToolPermission.ALLOW, read.permission().permission());
-        assertArrayEquals("before".getBytes(StandardCharsets.UTF_8), read.content());
+        assertArrayEquals("before".getBytes(StandardCharsets.UTF_8), read.content(), read.detail());
         assertEquals(ToolPermission.ALLOW, write.permission().permission());
         assertEquals("write-1", write.checkpointId());
         assertEquals(ToolPermission.ALLOW, delete.permission().permission());
-        assertFalse(Files.exists(source));
+        assertFalse(Files.exists(source), delete.detail());
     }
 
     @Test
@@ -288,6 +288,48 @@ class FileToolTest {
     }
 
     @Test
+    void serializesTheSameMutationAcrossIndependentJvmProcesses() throws Exception {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("cross-process-project")).toRealPath();
+        Path firstReady = temporaryDirectory.resolve("first.ready");
+        Path secondReady = temporaryDirectory.resolve("second.ready");
+        Path start = temporaryDirectory.resolve("start");
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        String classpath = System.getProperty("java.class.path");
+        Process first = new ProcessBuilder(
+                        java,
+                        "-cp",
+                        classpath,
+                        FileToolProcessFixture.class.getName(),
+                        project.toString(),
+                        firstReady.toString(),
+                        start.toString())
+                .start();
+        Process second = new ProcessBuilder(
+                        java,
+                        "-cp",
+                        classpath,
+                        FileToolProcessFixture.class.getName(),
+                        project.toString(),
+                        secondReady.toString(),
+                        start.toString())
+                .start();
+        try {
+            awaitFile(firstReady);
+            awaitFile(secondReady);
+            Files.writeString(start, "start");
+
+            assertTrue(first.waitFor(10, TimeUnit.SECONDS));
+            assertTrue(second.waitFor(10, TimeUnit.SECONDS));
+            assertEquals(0, first.exitValue(), new String(first.getErrorStream().readAllBytes()));
+            assertEquals(0, second.exitValue(), new String(second.getErrorStream().readAllBytes()));
+            assertTrue(Files.isDirectory(project.resolve("created")));
+        } finally {
+            first.destroyForcibly();
+            second.destroyForcibly();
+        }
+    }
+
+    @Test
     void refusesATamperedCheckpointBeforeTouchingAnyPath() throws IOException {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path source = Files.writeString(project.resolve("source.txt"), "before");
@@ -301,6 +343,13 @@ class FileToolTest {
         assertThrows(FileCheckpointException.class, () -> tool.restore(result.checkpointId()));
         assertEquals("untouched", Files.readString(victim));
         assertEquals("after", Files.readString(source));
+    }
+
+    private static void awaitFile(Path path) throws Exception {
+        for (int attempt = 0; attempt < 200 && Files.notExists(path); attempt++) {
+            Thread.sleep(10);
+        }
+        assertTrue(Files.exists(path), "child JVM did not reach the mutation barrier");
     }
 
     @Test

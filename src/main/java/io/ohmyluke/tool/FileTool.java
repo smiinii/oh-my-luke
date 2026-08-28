@@ -5,11 +5,9 @@ import io.ohmyluke.policy.ToolPermission;
 import io.ohmyluke.policy.ToolPermissionDecision;
 import io.ohmyluke.policy.ToolPermissionEvaluator;
 import io.ohmyluke.policy.ToolPermissionRequest;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Objects;
 
@@ -146,13 +144,13 @@ public final class FileTool {
                     false,
                     null,
                     null,
-                    "File checkpoint creation failed safely: " + error.getClass().getSimpleName());
+                    "File checkpoint creation failed safely: " + error.getMessage());
         }
         try {
             switch (request.operation()) {
                 case WRITE -> write(source, request.content());
-                case CREATE_DIRECTORY -> Files.createDirectory(source);
-                case MOVE -> Files.move(source, destination, StandardCopyOption.ATOMIC_MOVE);
+                case CREATE_DIRECTORY -> SecureFileOperations.createDirectory(source);
+                case MOVE -> SecureFileOperations.move(source, destination);
                 case DELETE -> FileCheckpointStore.deleteTree(source);
                 case READ -> throw new IllegalStateException("READ was already handled");
             }
@@ -162,7 +160,7 @@ public final class FileTool {
                     null,
                     checkpointId,
                     "File operation completed with a restorable checkpoint");
-        } catch (IOException | RuntimeException error) {
+        } catch (RuntimeException error) {
             try {
                 checkpoints.restore(checkpointId);
             } catch (RuntimeException restoreError) {
@@ -179,18 +177,9 @@ public final class FileTool {
 
     private static FileToolResult read(Path source, ToolPermissionDecision decision) {
         try {
-            long size = Files.size(source);
-            if (size > MAX_CONTENT_BYTES) {
-                return new FileToolResult(
-                        decision,
-                        false,
-                        null,
-                        null,
-                        "File exceeds the structured read limit of " + MAX_CONTENT_BYTES + " bytes");
-            }
-            byte[] content = Files.readAllBytes(source);
+            byte[] content = SecureFileOperations.readAllBytes(source, MAX_CONTENT_BYTES);
             return new FileToolResult(decision, true, content, null, "File read completed");
-        } catch (IOException error) {
+        } catch (RuntimeException error) {
             return new FileToolResult(
                     decision,
                     false,
@@ -208,7 +197,7 @@ public final class FileTool {
         if (Files.exists(source, LinkOption.NOFOLLOW_LINKS) && Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) {
             throw new FileCheckpointException("cannot replace a directory with file content: " + source);
         }
-        FileCheckpointStore.writeFile(source, content);
+        SecureFileOperations.writeFile(source, content);
     }
 
     private static FileToolResult denied(String reasonCode, String detail) {

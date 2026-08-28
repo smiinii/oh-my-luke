@@ -597,71 +597,15 @@ final class FileCheckpointStore {
     }
 
     static void deleteTree(Path root) {
-        if (Files.notExists(root, LinkOption.NOFOLLOW_LINKS)) {
-            return;
-        }
-        rejectSymlinkComponents(root);
-        try {
-            Files.walkFileTree(root, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult postVisitDirectory(Path directory, IOException error) throws IOException {
-                    if (error != null) {
-                        throw error;
-                    }
-                    Files.delete(directory);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException error) {
-            throw new FileCheckpointException("failed to delete path during file operation: " + root, error);
-        }
+        SecureFileOperations.deleteTree(root);
     }
 
     static void writeFile(Path target, byte[] content) {
-        Path temporary = null;
-        try {
-            Path parent = target.getParent();
-            if (parent == null || !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) {
-                throw new FileCheckpointException("target parent must be an existing directory: " + target);
-            }
-            rejectSymlinkComponents(parent);
-            temporary = Files.createTempFile(parent, target.getFileName() + ".", ".tmp");
-            Files.write(temporary, content, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS);
-            try {
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException error) {
-                throw new FileCheckpointException("atomic file replacement is unavailable: " + target, error);
-            }
-        } catch (IOException error) {
-            throw new FileCheckpointException("failed to write file: " + target, error);
-        } finally {
-            if (temporary != null) {
-                try {
-                    Files.deleteIfExists(temporary);
-                } catch (IOException ignored) {
-                    // A temporary file is not user data.
-                }
-            }
-        }
+        SecureFileOperations.writeFile(target, content);
     }
 
     private static void createDirectory(Path path) {
-        try {
-            Path parent = path.getParent();
-            if (parent == null || !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) {
-                throw new FileCheckpointException("directory parent must exist: " + path);
-            }
-            rejectSymlinkComponents(parent);
-            Files.createDirectory(path);
-        } catch (IOException error) {
-            throw new FileCheckpointException("failed to restore directory: " + path, error);
-        }
+        SecureFileOperations.createDirectory(path);
     }
 
     private static void rejectSymlinkComponents(Path absolute) {
@@ -862,7 +806,7 @@ final class FileCheckpointStore {
                         if (size < 0 || size > MAX_BYTES - bytes) {
                             throw new FileCheckpointException("file checkpoint exceeds " + MAX_BYTES + " bytes");
                         }
-                        byte[] content = Files.readAllBytes(file);
+                        byte[] content = SecureFileOperations.readAllBytes(file, MAX_BYTES - bytes);
                         if (content.length != size) {
                             throw new FileCheckpointException("file changed while its checkpoint was captured: " + file);
                         }
