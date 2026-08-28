@@ -120,11 +120,7 @@ public final class GraphRunner {
     }
 
     private static Map<String, String> immutableState(Map<String, String> values) {
-        LinkedHashMap<String, String> copy = new LinkedHashMap<>();
-        values.forEach((key, value) -> copy.put(
-                Objects.requireNonNull(key, "state key"),
-                Objects.requireNonNull(value, "state value")));
-        return Map.copyOf(copy);
+        return ImmutableStringMap.copyOf(values);
     }
 
     private static RunState snapshot(

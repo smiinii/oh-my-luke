@@ -18,7 +18,7 @@ public record RunState(
         if (executedSteps < 0) {
             throw new IllegalArgumentException("executedSteps must not be negative");
         }
-        values = Map.copyOf(Objects.requireNonNull(values, "values"));
+        values = ImmutableStringMap.copyOf(values);
         path = List.copyOf(Objects.requireNonNull(path, "path"));
         events = List.copyOf(Objects.requireNonNull(events, "events"));
     }

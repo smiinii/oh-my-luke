@@ -21,6 +21,6 @@ public record TransitionEvent(
         Objects.requireNonNull(nextNode, "nextNode");
         Objects.requireNonNull(selectionReason, "selectionReason");
         Objects.requireNonNull(statePatch, "statePatch");
-        stateAfter = Map.copyOf(Objects.requireNonNull(stateAfter, "stateAfter"));
+        stateAfter = ImmutableStringMap.copyOf(stateAfter);
     }
 }

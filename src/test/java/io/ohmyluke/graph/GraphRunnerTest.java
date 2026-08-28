@@ -2,6 +2,8 @@ package io.ohmyluke.graph;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,6 +66,41 @@ class GraphRunnerTest {
     }
 
     @Test
+    void preservesStateIterationOrderAcrossNodeContextAndRunState() {
+        List<String> observedOrder = new ArrayList<>();
+        Map<String, String> patchUpdates = new LinkedHashMap<>();
+        patchUpdates.put("patch-first", "first");
+        patchUpdates.put("patch-second", "second");
+        Node observer = node("observer", context -> {
+            observedOrder.addAll(context.values().keySet());
+            return NodeResult.success(new StatePatch(patchUpdates));
+        });
+        GraphDefinition graph = new GraphDefinition(
+                observer.id(),
+                Set.of(observer),
+                List.of(new Edge(observer.id(), END, Condition.always())),
+                Set.of(END),
+                0);
+        Map<String, String> initialValues = new LinkedHashMap<>();
+        for (int index = 0; index < 32; index++) {
+            initialValues.put("key-" + index, "value-" + index);
+        }
+
+        RunState result = runner.run(graph, initialValues);
+        List<String> expectedFinalOrder = new ArrayList<>(initialValues.keySet());
+        expectedFinalOrder.addAll(patchUpdates.keySet());
+
+        assertEquals(List.copyOf(initialValues.keySet()), observedOrder);
+        assertEquals(expectedFinalOrder, List.copyOf(result.values().keySet()));
+        assertEquals(
+                List.copyOf(patchUpdates.keySet()),
+                List.copyOf(result.events().getFirst().statePatch().updates().keySet()));
+        assertEquals(
+                expectedFinalOrder,
+                List.copyOf(result.events().getFirst().stateAfter().keySet()));
+    }
+
+    @Test
     void stopsSafelyWhenStepLimitIsReached() {
         Node writer = node("write", context -> NodeResult.success());
         Node inspector = node("inspect", context -> NodeResult.failure());
@@ -73,7 +110,9 @@ class GraphRunnerTest {
                 List.of(
                         new Edge(WRITE, INSPECT, Condition.always()),
                         new Edge(INSPECT, END, Condition.outcomeIs(Outcome.SUCCESS)),
-                        new Edge(INSPECT, WRITE, Condition.outcomeIs(Outcome.FAILURE))),
+                        new Edge(INSPECT, WRITE, Condition.outcomeIs(Outcome.FAILURE)),
+                        new Edge(INSPECT, END, Condition.outcomeIs(Outcome.SKIPPED)),
+                        new Edge(INSPECT, END, Condition.outcomeIs(Outcome.CANCELLED))),
                 Set.of(END),
                 3);
 
@@ -100,7 +139,9 @@ class GraphRunnerTest {
                 List.of(
                         new Edge(WRITE, INSPECT, Condition.always()),
                         new Edge(INSPECT, END, Condition.outcomeIs(Outcome.SUCCESS)),
-                        new Edge(INSPECT, WRITE, Condition.outcomeIs(Outcome.FAILURE))),
+                        new Edge(INSPECT, WRITE, Condition.outcomeIs(Outcome.FAILURE)),
+                        new Edge(INSPECT, END, Condition.outcomeIs(Outcome.SKIPPED)),
+                        new Edge(INSPECT, END, Condition.outcomeIs(Outcome.CANCELLED))),
                 Set.of(END),
                 maxSteps);
     }

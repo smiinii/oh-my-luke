@@ -36,12 +36,14 @@ public final class GraphValidator {
         }
 
         Map<NodeId, List<NodeId>> adjacency = new HashMap<>();
+        Map<NodeId, List<Edge>> outgoingEdges = new HashMap<>();
         Set<NodeId> sourcesWithEdges = new HashSet<>();
         for (Edge edge : graph.edges()) {
             if (!nodesById.containsKey(edge.from())) {
                 problems.add("edge has unknown source: " + edge.from());
             } else {
                 sourcesWithEdges.add(edge.from());
+                outgoingEdges.computeIfAbsent(edge.from(), ignored -> new ArrayList<>()).add(edge);
             }
             if (!knownIds.contains(edge.to())) {
                 problems.add("edge has unknown target: " + edge.to());
@@ -59,6 +61,8 @@ public final class GraphValidator {
                 problems.add("executable node has no outgoing edge: " + nodeId);
             }
         }
+
+        validateDeterministicBranches(nodesById.keySet(), outgoingEdges, problems);
 
         Set<NodeId> reachable = reachableFrom(graph.start(), adjacency, knownIds);
         for (NodeId nodeId : nodesById.keySet()) {
@@ -125,36 +129,67 @@ public final class GraphValidator {
     private static boolean containsCycle(
             Set<NodeId> executableNodes,
             Map<NodeId, List<NodeId>> adjacency) {
-        Set<NodeId> visiting = new HashSet<>();
-        Set<NodeId> visited = new HashSet<>();
+        Map<NodeId, Integer> incomingEdgeCounts = new HashMap<>();
         for (NodeId node : executableNodes) {
-            if (containsCycleFrom(node, executableNodes, adjacency, visiting, visited)) {
-                return true;
+            incomingEdgeCounts.put(node, 0);
+        }
+        for (NodeId source : executableNodes) {
+            for (NodeId target : adjacency.getOrDefault(source, List.of())) {
+                if (executableNodes.contains(target)) {
+                    incomingEdgeCounts.merge(target, 1, Integer::sum);
+                }
             }
         }
-        return false;
+
+        ArrayDeque<NodeId> pending = new ArrayDeque<>();
+        incomingEdgeCounts.forEach((node, count) -> {
+            if (count == 0) {
+                pending.add(node);
+            }
+        });
+
+        int visitedCount = 0;
+        while (!pending.isEmpty()) {
+            NodeId current = pending.remove();
+            visitedCount++;
+            for (NodeId target : adjacency.getOrDefault(current, List.of())) {
+                if (!executableNodes.contains(target)) {
+                    continue;
+                }
+                int remaining = incomingEdgeCounts.merge(target, -1, Integer::sum);
+                if (remaining == 0) {
+                    pending.add(target);
+                }
+            }
+        }
+
+        return visitedCount != executableNodes.size();
     }
 
-    private static boolean containsCycleFrom(
-            NodeId node,
+    private static void validateDeterministicBranches(
             Set<NodeId> executableNodes,
-            Map<NodeId, List<NodeId>> adjacency,
-            Set<NodeId> visiting,
-            Set<NodeId> visited) {
-        if (visited.contains(node)) {
-            return false;
-        }
-        if (!visiting.add(node)) {
-            return true;
-        }
-        for (NodeId next : adjacency.getOrDefault(node, List.of())) {
-            if (executableNodes.contains(next)
-                    && containsCycleFrom(next, executableNodes, adjacency, visiting, visited)) {
-                return true;
+            Map<NodeId, List<Edge>> outgoingEdges,
+            List<String> problems) {
+        for (NodeId node : executableNodes) {
+            List<Edge> candidates = outgoingEdges.getOrDefault(node, List.of());
+            for (Outcome outcome : Outcome.values()) {
+                long matchingCount = candidates.stream()
+                        .filter(edge -> matchesOutcome(edge.condition(), outcome))
+                        .count();
+                if (matchingCount == 0) {
+                    problems.add("no edge can match node " + node + " for outcome " + outcome);
+                } else if (matchingCount > 1) {
+                    problems.add("multiple edges can match node " + node + " for outcome " + outcome);
+                }
             }
         }
-        visiting.remove(node);
-        visited.add(node);
-        return false;
+    }
+
+    private static boolean matchesOutcome(Condition condition, Outcome outcome) {
+        if (condition instanceof Condition.Always) {
+            return true;
+        }
+        Condition.OutcomeIs outcomeCondition = (Condition.OutcomeIs) condition;
+        return outcomeCondition.expected() == outcome;
     }
 }
