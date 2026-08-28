@@ -32,6 +32,7 @@ class LinuxBubblewrapIntegrationTest {
         Assumptions.assumeTrue(sandbox.available(), "bubblewrap is not installed");
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path outside = Files.writeString(temporaryDirectory.resolve("outside-secret.txt"), "never-visible");
+        Path sibling = Files.writeString(temporaryDirectory.resolve("sibling-secret.txt"), "sibling-hidden");
         ProcessTool tool = tool(project, sandbox);
 
         ProcessToolResult readOutside = tool.execute(request(
@@ -45,8 +46,44 @@ class LinuxBubblewrapIntegrationTest {
 
         assertNotEquals(0, readOutside.exitCode());
         assertFalse(readOutside.standardOutput().contains("never-visible"));
+        ProcessToolResult readSibling = tool.execute(request(
+                "read-sibling",
+                Path.of("/bin/cat"),
+                List.of(sibling.toString())));
+        assertNotEquals(0, readSibling.exitCode());
+        assertFalse(readSibling.standardOutput().contains("sibling-hidden"));
         assertEquals(0, writeCopy.exitCode(), writeCopy.standardError());
         assertFalse(Files.exists(project.resolve("created.txt")));
+    }
+
+    @Test
+    void realBubblewrapDoesNotBindSiblingFilesFromTheDisposableParent() throws Exception {
+        LinuxBubblewrapSandbox sandbox = new LinuxBubblewrapSandbox();
+        Assumptions.assumeTrue(sandbox.available(), "bubblewrap is not installed");
+        Path parent = Files.createTempDirectory(
+                Path.of(System.getProperty("java.io.tmpdir")).toRealPath(),
+                "oml-bwrap-parent-");
+        try {
+            Path workspace = Files.createDirectory(parent.resolve("project"));
+            Path home = Files.createDirectory(parent.resolve("home"));
+            Path sibling = Files.writeString(parent.resolve("sibling-secret.txt"), "must-stay-hidden");
+            ProcessSandboxSpec specification = new ProcessSandboxSpec(
+                    Path.of("/bin/cat"),
+                    List.of(sibling.toString()),
+                    workspace,
+                    workspace,
+                    home,
+                    false);
+
+            Process process = new ProcessBuilder(sandbox.prepare(specification).command()).start();
+            String output = new String(process.getInputStream().readAllBytes());
+            String error = new String(process.getErrorStream().readAllBytes());
+            assertEquals(true, process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS), error);
+            assertNotEquals(0, process.exitValue());
+            assertFalse(output.contains("must-stay-hidden"));
+        } finally {
+            FileCheckpointStore.deleteTree(parent);
+        }
     }
 
     private static ProcessTool tool(Path project, ProcessSandbox sandbox) {

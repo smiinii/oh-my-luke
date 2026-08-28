@@ -45,7 +45,9 @@ class LinuxBubblewrapSandboxTest {
         assertTrue(localCommand.contains("--unshare-net"));
         assertFalse(networkCommand.contains("--unshare-net"));
         assertTrue(localCommand.contains("--die-with-parent"));
-        assertTrue(localCommand.contains("--as-pid-1"));
+        assertFalse(localCommand.contains("--as-pid-1"));
         assertTrue(localCommand.contains(temporaryDirectory.toString()));
+        assertTrue(localCommand.contains(workspace.toString()));
+        assertTrue(localCommand.contains(home.toString()));
     }
 }

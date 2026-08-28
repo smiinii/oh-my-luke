@@ -52,7 +52,7 @@ OML은 명령어 문자열 허용 목록이 아니라 작업 능력과 정확한
 - `.git`, `.oml`, `.env`, `.npmrc`, `.netrc`, `.pypirc`, Maven 설정, 인증 JSON, 키·인증서와 기존 빌드 산출물을 제외한 임시 프로젝트 사본에서 실행한다. 프로세스가 만든 파일은 실제 프로젝트에 반영되지 않는다.
 - macOS는 Seatbelt, Linux/WSL2는 bubblewrap을 사용한다. Windows는 검증된 네이티브 어댑터가 추가되기 전까지 프로세스 실행을 거부한다.
 - 네트워크는 기본 차단하며 `NETWORK_ACCESS`, `DEPENDENCY_INSTALL`, `EXTERNAL_WRITE` 승인을 받은 실행에서만 연다. 현재 MVP 승인은 도메인 단위가 아니라 해당 구조화 실행의 전체 네트워크 접근이다.
-- macOS 프로필은 프로젝트 사본·격리 HOME보다 넓은 사용자 데이터 root를 읽지 못하며 자식 프로세스 생성을 거부한다. Linux는 PID namespace에서 bubblewrap을 PID 1로 실행해 자식을 회수하고 부모 종료 시 namespace를 닫는다.
+- macOS 프로필은 프로젝트 사본·격리 HOME보다 넓은 사용자 데이터 root를 읽지 못하며 자식 프로세스 생성을 거부한다. Linux는 bubblewrap의 기본 PID 1 reaper가 있는 PID namespace에서 자식을 회수하고 부모 종료 시 namespace를 닫는다. reaper를 끄는 `--as-pid-1`은 사용하지 않는다.
 - 표준 출력과 오류를 끝까지 비우면서 저장 크기를 제한하고, 토큰 형태를 제거한 뒤 아티팩트로 저장한다.
 
 ## 현재 위협 모델의 한계

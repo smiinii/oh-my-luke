@@ -36,7 +36,6 @@ public final class LinuxBubblewrapSandbox implements ProcessSandbox {
         command.add(bubblewrap.toString());
         command.addAll(List.of(
                 "--die-with-parent",
-                "--as-pid-1",
                 "--new-session",
                 "--unshare-pid",
                 "--unshare-uts",
@@ -54,12 +53,13 @@ public final class LinuxBubblewrapSandbox implements ProcessSandbox {
         command.addAll(List.of("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"));
         Path workspaceParent = specification.workspaceRoot().getParent();
         Path homeParent = specification.isolatedHome().getParent();
-        if (workspaceParent != null && workspaceParent.equals(homeParent)) {
-            bind(command, workspaceParent);
-        } else {
-            bind(command, specification.workspaceRoot());
-            bind(command, specification.isolatedHome());
+        if (workspaceParent == null || !workspaceParent.equals(homeParent)) {
+            throw new ProcessToolException("workspace and isolated HOME must share one disposable parent");
         }
+        command.add("--dir");
+        command.add(workspaceParent.toString());
+        bind(command, specification.workspaceRoot());
+        bind(command, specification.isolatedHome());
         command.add("--chdir");
         command.add(specification.workingDirectory().toString());
         command.add("--");
