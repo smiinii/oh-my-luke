@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -76,7 +77,7 @@ class MacOsSeatbeltSandboxTest {
         }
     }
 
-    @Test
+    @RepeatedTest(20)
     void allowsBuildStyleChildrenButRemovesThemWhenTheParentExits() throws Exception {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
         ProcessToolRequest request = new ProcessToolRequest(

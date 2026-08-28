@@ -49,15 +49,15 @@ class LinuxBubblewrapIntegrationTest {
                 Path.of("/usr/bin/touch"),
                 List.of("created.txt")));
 
-        assertNotEquals(0, readOutside.exitCode());
+        assertNotEquals(0, readOutside.exitCode(), diagnostic(readOutside));
         assertFalse(readOutside.standardOutput().contains("never-visible"));
         ProcessToolResult readSibling = tool.execute(request(
                 "read-sibling",
                 Path.of("/bin/cat"),
                 List.of(sibling.toString())));
-        assertNotEquals(0, readSibling.exitCode());
+        assertNotEquals(0, readSibling.exitCode(), diagnostic(readSibling));
         assertFalse(readSibling.standardOutput().contains("sibling-hidden"));
-        assertEquals(0, writeCopy.exitCode(), writeCopy.standardError());
+        assertEquals(0, writeCopy.exitCode(), diagnostic(writeCopy));
         assertFalse(Files.exists(project.resolve("created.txt")));
     }
 
@@ -126,12 +126,12 @@ class LinuxBubblewrapIntegrationTest {
                     System.currentTimeMillis() + 60_000);
             ProcessTool approved = tool(project, sandbox, List.of(grant));
 
-            approved.execute(request);
+            ProcessToolResult approvedResult = approved.execute(request);
             for (int attempt = 0; attempt < 20 && !connected.get(); attempt++) {
                 Thread.sleep(10);
             }
-            assertNotEquals(0, blocked.exitCode());
-            assertEquals(true, connected.get());
+            assertNotEquals(0, blocked.exitCode(), diagnostic(blocked));
+            assertEquals(true, connected.get(), diagnostic(approvedResult));
         }
     }
 
@@ -156,7 +156,7 @@ class LinuxBubblewrapIntegrationTest {
             Thread.sleep(10);
         }
 
-        assertEquals(true, result.timedOut());
+        assertEquals(true, result.timedOut(), diagnostic(result));
         assertFalse(processWithArgument(marker));
     }
 
@@ -180,6 +180,14 @@ class LinuxBubblewrapIntegrationTest {
         return ProcessHandle.allProcesses().anyMatch(handle -> handle.info().arguments()
                 .map(arguments -> java.util.Arrays.stream(arguments).anyMatch(argument -> argument.contains(marker)))
                 .orElse(false));
+    }
+
+    private static String diagnostic(ProcessToolResult result) {
+        return "exit=" + result.exitCode()
+                + ", executed=" + result.executed()
+                + ", timedOut=" + result.timedOut()
+                + ", detail=" + result.detail()
+                + ", stderr=" + result.standardError();
     }
 
     private static ProcessToolRequest request(String operationId, Path executable, List<String> arguments) {

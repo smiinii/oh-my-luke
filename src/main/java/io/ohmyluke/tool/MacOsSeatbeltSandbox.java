@@ -9,6 +9,16 @@ import java.util.List;
 /** macOS Seatbelt launcher with a deny-by-default filesystem and network profile. */
 public final class MacOsSeatbeltSandbox implements ProcessSandbox {
     private static final Path SANDBOX_EXEC = Path.of("/usr/bin/sandbox-exec");
+    private static final Path SUPERVISOR_SHELL = Path.of("/bin/sh");
+    private static final String SUPERVISOR = String.join(
+            " ",
+            "set -m;",
+            "\"$@\" & oml_pid=$!;",
+            "trap 'kill -KILL -$oml_pid 2>/dev/null' EXIT INT TERM HUP;",
+            "wait $oml_pid; oml_status=$?;",
+            "kill -KILL -$oml_pid 2>/dev/null;",
+            "trap - EXIT;",
+            "exit $oml_status");
 
     @Override
     public boolean available() {
@@ -32,6 +42,13 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
             command.add(SANDBOX_EXEC.toString());
             command.add("-f");
             command.add(profile.toString());
+            // This is a fixed OML-owned wrapper, not caller-provided shell text.
+            // Job control places the requested process and all of its children in
+            // one process group, which is killed even if the direct parent exits.
+            command.add(SUPERVISOR_SHELL.toString());
+            command.add("-c");
+            command.add(SUPERVISOR);
+            command.add("oml-process-supervisor");
             command.add(specification.executable().toString());
             command.addAll(specification.arguments());
             return new SandboxLaunch(command, profile);
