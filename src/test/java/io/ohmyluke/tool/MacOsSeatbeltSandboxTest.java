@@ -97,6 +97,7 @@ class MacOsSeatbeltSandboxTest {
 
         assertEquals(0, result.exitCode(), result.standardError());
         assertFalse(result.timedOut());
+        assertFalse(result.standardError().contains("Done \"$@\""));
         long childPid = Long.parseLong(result.standardOutput().trim());
         for (int attempt = 0; attempt < 20
                 && ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false);

@@ -97,6 +97,25 @@ public final class FileTool {
         if (request.operation() == FileOperation.READ) {
             return read(source, decision);
         }
+        try {
+            return checkpoints.withMutationLock(
+                    () -> performMutation(request, source, destination, permissionRequest, decision));
+        } catch (RuntimeException error) {
+            return new FileToolResult(
+                    decision,
+                    false,
+                    null,
+                    null,
+                    "File mutation lock failed safely: " + error.getClass().getSimpleName());
+        }
+    }
+
+    private FileToolResult performMutation(
+            FileToolRequest request,
+            Path source,
+            Path destination,
+            ToolPermissionRequest permissionRequest,
+            ToolPermissionDecision decision) {
         List<Path> roots = destination == null ? List.of(source) : List.of(source, destination);
         try {
             if (checkpoints.alreadyApplied(request, permissionRequest, roots)) {

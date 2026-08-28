@@ -165,6 +165,30 @@ class ProcessToolTest {
         org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalArgumentException.class,
                 () -> new ProcessToolRequest(
+                        "secret-header",
+                        Path.of("/usr/bin/curl"),
+                        List.of("-H", "X-Api-Key: opaque-secret-value", "https://example.com"),
+                        Path.of("."),
+                        Map.of(),
+                        Duration.ofSeconds(5),
+                        1024,
+                        ToolCapability.NETWORK_ACCESS,
+                        "network:any"));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new ProcessToolRequest(
+                        "secret-client-flag",
+                        Path.of("/usr/bin/curl"),
+                        List.of("--client-secret", "opaque-secret-value"),
+                        Path.of("."),
+                        Map.of(),
+                        Duration.ofSeconds(5),
+                        1024,
+                        ToolCapability.NETWORK_ACCESS,
+                        "network:any"));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new ProcessToolRequest(
                         "secret-url",
                         Path.of("/usr/bin/curl"),
                         List.of("https://alice:hunter2@example.com/api"),
@@ -183,12 +207,15 @@ class ProcessToolTest {
 
         ProcessToolResult secret = tool.execute(javaRequest(project, "secret"));
         ProcessToolResult opaque = tool.execute(javaRequest(project, "opaque-secrets"));
+        ProcessToolResult partial = tool.execute(javaRequest(project, "secret").withOutputLimit(10));
         ProcessToolResult large = tool.execute(javaRequest(project, "large", "4096").withOutputLimit(128));
 
         assertFalse(secret.standardOutput().contains("ghp_"));
         assertTrue(secret.standardOutput().contains("[REDACTED]"));
         assertFalse(opaque.standardOutput().contains("AKIA"));
         assertFalse(opaque.standardOutput().contains("opaque-secret"));
+        assertFalse(partial.standardOutput().contains("ghp_"));
+        assertTrue(partial.standardOutput().contains("[REDACTED]"));
         assertEquals(128, large.standardOutput().length());
         assertTrue(large.outputTruncated());
     }

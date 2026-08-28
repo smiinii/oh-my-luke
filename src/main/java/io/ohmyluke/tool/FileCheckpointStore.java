@@ -45,6 +45,7 @@ final class FileCheckpointStore {
     private static final int INTEGRITY_KEY_BYTES = 32;
     private static final String INTEGRITY_KEY_FILE = "file-checkpoint-integrity.key";
     private static final ConcurrentHashMap<Path, Object> JVM_LOCKS = new ConcurrentHashMap<>();
+    private static final ThreadLocal<Set<Path>> HELD_LOCKS = ThreadLocal.withInitial(HashSet::new);
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     private final Path projectRoot;
@@ -113,10 +114,10 @@ final class FileCheckpointStore {
 
     void restore(String checkpointId) {
         String validated = validateId(checkpointId, "checkpointId");
-        withCheckpointLock(validated, () -> {
-            restoreLocked(validated);
-            return null;
-        });
+        withMutationLock(() -> withCheckpointLock(validated, () -> {
+                    restoreLocked(validated);
+                    return null;
+                }));
     }
 
     private void restoreLocked(String checkpointId) {
@@ -208,6 +209,11 @@ final class FileCheckpointStore {
 
     Path checkpointPath(String checkpointId) {
         return checkpointRoot.resolve(validateId(checkpointId, "checkpointId") + ".json");
+    }
+
+    <T> T withMutationLock(Supplier<T> action) {
+        Objects.requireNonNull(action, "action");
+        return withFileLock(projectRoot.resolve(".oml/file-tool-mutations.lock"), action);
     }
 
     private FileCheckpoint loadValidated(String checkpointId) {
@@ -552,24 +558,40 @@ final class FileCheckpointStore {
 
     private <T> T withCheckpointLock(String checkpointId, Supplier<T> action) {
         Path lockPath = checkpointRoot.resolve(validateId(checkpointId, "checkpointId") + ".lock");
+        return withFileLock(lockPath, action);
+    }
+
+    private <T> T withFileLock(Path lockPath, Supplier<T> action) {
+        Path normalizedLock = lockPath.toAbsolutePath().normalize();
+        Set<Path> held = HELD_LOCKS.get();
+        if (!held.add(normalizedLock)) {
+            return action.get();
+        }
         Object jvmLock = JVM_LOCKS.computeIfAbsent(lockPath, ignored -> new Object());
-        synchronized (jvmLock) {
-            try {
-                createCheckpointDirectory();
-                if (Files.isSymbolicLink(lockPath)) {
-                    throw new FileCheckpointException("file checkpoint lock must not be a symbolic link");
+        try {
+            synchronized (jvmLock) {
+                try {
+                    createCheckpointDirectory();
+                    if (Files.isSymbolicLink(lockPath)) {
+                        throw new FileCheckpointException("file tool lock must not be a symbolic link");
+                    }
+                    try (FileChannel channel = FileChannel.open(
+                                    lockPath,
+                                    StandardOpenOption.CREATE,
+                                    StandardOpenOption.WRITE,
+                                    LinkOption.NOFOLLOW_LINKS);
+                            java.nio.channels.FileLock ignored = channel.lock()) {
+                        restrictToCurrentUser(lockPath);
+                        return action.get();
+                    }
+                } catch (IOException error) {
+                    throw new FileCheckpointException("failed to lock file tool state", error);
                 }
-                try (FileChannel channel = FileChannel.open(
-                                lockPath,
-                                StandardOpenOption.CREATE,
-                                StandardOpenOption.WRITE,
-                                LinkOption.NOFOLLOW_LINKS);
-                        java.nio.channels.FileLock ignored = channel.lock()) {
-                    restrictToCurrentUser(lockPath);
-                    return action.get();
-                }
-            } catch (IOException error) {
-                throw new FileCheckpointException("failed to lock file checkpoint", error);
+            }
+        } finally {
+            held.remove(normalizedLock);
+            if (held.isEmpty()) {
+                HELD_LOCKS.remove();
             }
         }
     }

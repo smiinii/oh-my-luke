@@ -12,8 +12,9 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
     private static final Path SUPERVISOR_SHELL = Path.of("/bin/sh");
     private static final String SUPERVISOR = String.join(
             " ",
+            "exec 3>&2 2>/dev/null;",
             "set -m;",
-            "\"$@\" & oml_pid=$!;",
+            "\"$@\" 2>&3 & oml_pid=$!;",
             "trap 'kill -KILL -$oml_pid 2>/dev/null' EXIT INT TERM HUP;",
             "wait $oml_pid; oml_status=$?;",
             "kill -KILL -$oml_pid 2>/dev/null;",
@@ -65,7 +66,11 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
         StringBuilder profile = new StringBuilder();
         profile.append("(version 1)\n");
         profile.append("(deny default)\n");
-        profile.append("(allow process*)\n");
+        if (specification.networkAllowed()) {
+            profile.append("(allow process-exec (literal \"").append(executable).append("\"))\n");
+        } else {
+            profile.append("(allow process*)\n");
+        }
         profile.append("(allow signal (target self))\n");
         profile.append("(allow sysctl-read)\n");
         profile.append("(allow mach-lookup)\n");

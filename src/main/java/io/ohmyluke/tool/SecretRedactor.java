@@ -12,11 +12,16 @@ final class SecretRedactor {
             Pattern.compile("eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"),
             Pattern.compile("(?i)authorization\\s*[:=]\\s*(?:bearer\\s+)?[^\\s]+"),
             Pattern.compile("(?i)(token|secret|password|api[_-]?key)\\s*[:=]\\s*[^\\s]+"));
+    private static final Pattern TRUNCATED_SECRET_SUFFIX = Pattern.compile(
+            "(?i)(?:gh[pousr]_[A-Za-z0-9_]*|sk-[A-Za-z0-9_-]*|AKIA[0-9A-Z]*|eyJ[A-Za-z0-9_.-]*|(?:authorization|token|secret|password|api[_-]?key)\\s*[:=].*)$");
 
-    String redact(String value) {
+    String redact(String value, boolean truncated) {
         String redacted = value;
         for (Pattern pattern : TOKEN_PATTERNS) {
             redacted = pattern.matcher(redacted).replaceAll("[REDACTED]");
+        }
+        if (truncated) {
+            redacted = TRUNCATED_SECRET_SUFFIX.matcher(redacted).replaceAll("[REDACTED]");
         }
         return redacted;
     }

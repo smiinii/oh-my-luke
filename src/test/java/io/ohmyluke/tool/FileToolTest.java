@@ -23,6 +23,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.condition.DisabledOnOs;
@@ -248,6 +251,40 @@ class FileToolTest {
         assertTrue(tool.execute(delete).executed());
         assertTrue(tool.execute(delete).executed());
         assertFalse(Files.exists(destination));
+    }
+
+    @Test
+    void serializesConcurrentRetriesAcrossToolInstancesUntilTheMutationCompletes() throws Exception {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        CountDownLatch bothApproved = new CountDownLatch(2);
+        CountDownLatch startMutation = new CountDownLatch(1);
+        io.ohmyluke.policy.ToolPermissionEvaluator evaluator = request -> {
+            bothApproved.countDown();
+            try {
+                if (!startMutation.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("concurrent test approval timed out");
+                }
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(error);
+            }
+            return io.ohmyluke.policy.ToolPermissionDecision.allow("test.allow", "test", null);
+        };
+        FileTool first = new FileTool(project, "run-001", evaluator, CLOCK);
+        FileTool second = new FileTool(project, "run-001", evaluator, CLOCK);
+        FileToolRequest request = FileToolRequest.createDirectory(
+                "concurrent-create", project.resolve("created"));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var firstResult = executor.submit(() -> first.execute(request));
+            var secondResult = executor.submit(() -> second.execute(request));
+            assertTrue(bothApproved.await(5, TimeUnit.SECONDS));
+            startMutation.countDown();
+
+            assertTrue(firstResult.get(5, TimeUnit.SECONDS).executed());
+            assertTrue(secondResult.get(5, TimeUnit.SECONDS).executed());
+        }
+        assertTrue(Files.isDirectory(project.resolve("created")));
     }
 
     @Test
