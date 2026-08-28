@@ -1,0 +1,227 @@
+package io.ohmyluke.tool;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import io.ohmyluke.policy.PermissionGrantLedger;
+import io.ohmyluke.policy.ToolCapability;
+import io.ohmyluke.policy.ToolPermission;
+import io.ohmyluke.policy.ToolPermissionGrant;
+import io.ohmyluke.policy.ToolPermissionPolicy;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class ProcessToolTest {
+    private static final Instant NOW = Instant.parse("2026-08-28T00:00:00Z");
+    private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+
+    @TempDir
+    Path temporaryDirectory;
+
+    @Test
+    void failsClosedWhenNoVerifiedSandboxIsAvailable() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        ProcessTool tool = tool(project, new UnavailableProcessSandbox("not installed"), false, List.of());
+
+        ProcessToolResult result = tool.execute(javaRequest(project, "write"));
+
+        assertEquals(ToolPermission.DENY, result.permission().permission());
+        assertEquals("sandbox.unavailable", result.permission().reasonCode());
+        assertFalse(result.executed());
+    }
+
+    @Test
+    void runsLocalCommandsInAnIsolatedCopyWithoutChangingTheProject() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Files.writeString(project.resolve("source.txt"), "source");
+        ProcessTool tool = tool(project, new TestVerifiedSandbox(), false, List.of());
+
+        ProcessToolResult result = tool.execute(javaRequest(project, "write"));
+
+        assertEquals(ToolPermission.ALLOW, result.permission().permission());
+        assertTrue(result.executed());
+        assertEquals(0, result.exitCode());
+        assertFalse(Files.exists(project.resolve("generated-by-process.txt")));
+        assertEquals("source", Files.readString(project.resolve("source.txt")));
+    }
+
+    @Test
+    void asksForNetworkOrExternalEffectsUntilTheExactScopeIsGranted() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        ProcessToolRequest request = javaRequest(project, "write").withCapability(
+                ToolCapability.EXTERNAL_WRITE,
+                "git:origin");
+        ProcessTool first = tool(project, new TestVerifiedSandbox(), false, List.of());
+        ProcessToolResult asked = first.execute(request);
+        ToolPermissionGrant grant = ToolPermissionGrant.forProject(
+                "grant-push",
+                first.permissionRequest(request),
+                NOW.plusSeconds(60).toEpochMilli());
+        ProcessTool approved = tool(project, new TestVerifiedSandbox(), false, List.of(grant));
+
+        ProcessToolResult allowed = approved.execute(request);
+
+        assertEquals(ToolPermission.ASK, asked.permission().permission());
+        assertEquals(ToolPermission.ALLOW, allowed.permission().permission());
+    }
+
+    @Test
+    void neverRunsShellWrappersEvenInAutonomousMode() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        ProcessTool tool = tool(project, new TestVerifiedSandbox(), true, List.of());
+        ProcessToolRequest request = new ProcessToolRequest(
+                "shell-1",
+                Path.of("/bin/sh"),
+                List.of("-c", "touch escaped"),
+                Path.of("."),
+                Map.of(),
+                Duration.ofSeconds(5),
+                1024,
+                ToolCapability.LOCAL_PROCESS,
+                "local");
+
+        ProcessToolResult result = tool.execute(request);
+
+        assertEquals(ToolPermission.DENY, result.permission().permission());
+        assertEquals("process.shell-deny", result.permission().reasonCode());
+    }
+
+    @Test
+    void doesNotInheritHostSecretsAndRejectsSecretEnvironmentNames() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        ProcessTool tool = tool(project, new TestVerifiedSandbox(), false, List.of());
+        ProcessToolRequest safe = javaRequest(project, "env", "OML_SAFE_VALUE")
+                .withEnvironment(Map.of("OML_SAFE_VALUE", "visible"));
+
+        ProcessToolResult result = tool.execute(safe);
+
+        assertEquals("visible", result.standardOutput());
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> safe.withEnvironment(Map.of("API_TOKEN", "secret")));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new ProcessToolRequest(
+                        "secret-arg",
+                        Path.of("/usr/bin/curl"),
+                        List.of("--token", "raw-value"),
+                        Path.of("."),
+                        Map.of(),
+                        Duration.ofSeconds(5),
+                        1024,
+                        ToolCapability.NETWORK_ACCESS,
+                        "network:any"));
+    }
+
+    @Test
+    void redactsLikelySecretsAndCapsOutputWhileContinuingToDrainIt() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        ProcessTool tool = tool(project, new TestVerifiedSandbox(), false, List.of());
+
+        ProcessToolResult secret = tool.execute(javaRequest(project, "secret"));
+        ProcessToolResult large = tool.execute(javaRequest(project, "large", "4096").withOutputLimit(128));
+
+        assertFalse(secret.standardOutput().contains("ghp_"));
+        assertTrue(secret.standardOutput().contains("[REDACTED]"));
+        assertEquals(128, large.standardOutput().length());
+        assertTrue(large.outputTruncated());
+    }
+
+    @Test
+    void timesOutAndTerminatesLongRunningProcesses() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        ProcessTool tool = tool(project, new TestVerifiedSandbox(), false, List.of());
+        ProcessToolRequest request = javaRequest(project, "sleep", "5000")
+                .withTimeout(Duration.ofMillis(100));
+
+        ProcessToolResult result = tool.execute(request);
+
+        assertTrue(result.executed());
+        assertTrue(result.timedOut());
+        assertEquals(-1, result.exitCode());
+    }
+
+    @Test
+    void excludesOmlGitAndCredentialFilesFromTheProcessWorkspace() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Files.createDirectories(project.resolve(".oml")).resolve("state.json");
+        Files.writeString(project.resolve(".oml/state.json"), "state");
+        Files.createDirectories(project.resolve(".git"));
+        Files.writeString(project.resolve(".env"), "TOKEN=secret");
+        ProcessWorkspace workspace = ProcessWorkspace.create(project, "run-001", "copy-1");
+
+        try {
+            assertFalse(Files.exists(workspace.projectRoot().resolve(".oml")));
+            assertFalse(Files.exists(workspace.projectRoot().resolve(".git")));
+            assertFalse(Files.exists(workspace.projectRoot().resolve(".env")));
+        } finally {
+            workspace.close();
+        }
+    }
+
+    private static ProcessTool tool(
+            Path project,
+            ProcessSandbox sandbox,
+            boolean autonomous,
+            List<ToolPermissionGrant> grants) {
+        ToolPermissionPolicy permissions = new ToolPermissionPolicy(
+                new PermissionGrantLedger(grants),
+                autonomous,
+                CLOCK);
+        return new ProcessTool(project, "run-001", permissions, sandbox);
+    }
+
+    private static ProcessToolRequest javaRequest(Path project, String... fixtureArguments) {
+        String javaHome = System.getProperty("java.home");
+        Path java = Path.of(javaHome, "bin", isWindows() ? "java.exe" : "java");
+        java.util.ArrayList<String> arguments = new java.util.ArrayList<>();
+        arguments.add("-cp");
+        arguments.add(System.getProperty("java.class.path"));
+        arguments.add(ProcessToolFixture.class.getName());
+        arguments.addAll(List.of(fixtureArguments));
+        return new ProcessToolRequest(
+                "process-" + fixtureArguments[0],
+                java,
+                arguments,
+                Path.of("."),
+                Map.of(),
+                Duration.ofSeconds(5),
+                8192,
+                ToolCapability.LOCAL_PROCESS,
+                "local:" + project.toAbsolutePath().normalize());
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
+    }
+
+    private static final class TestVerifiedSandbox implements ProcessSandbox {
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public String unavailableReason() {
+            return "";
+        }
+
+        @Override
+        public SandboxLaunch prepare(ProcessSandboxSpec specification) {
+            java.util.ArrayList<String> command = new java.util.ArrayList<>();
+            command.add(specification.executable().toString());
+            command.addAll(specification.arguments());
+            return SandboxLaunch.direct(command);
+        }
+    }
+}
