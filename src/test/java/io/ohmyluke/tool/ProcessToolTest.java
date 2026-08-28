@@ -165,6 +165,8 @@ class ProcessToolTest {
         for (List<String> credentialArguments : List.of(
                 List.of("-u", "alice:hunter2"),
                 List.of("--proxy-user", "alice:hunter2"),
+                List.of("--oauth2-bearer", "opaque-secret-value"),
+                List.of("--_auth=opaque-secret-value"),
                 List.of("-H", "X_API_KEY: opaque-secret-value"))) {
             org.junit.jupiter.api.Assertions.assertThrows(
                     IllegalArgumentException.class,
@@ -244,6 +246,7 @@ class ProcessToolTest {
         assertFalse(opaque.standardOutput().contains("opaque-secret"));
         assertFalse(authVariants.standardOutput().contains("dXNlcjpwYXNz"));
         assertFalse(authVariants.standardOutput().contains("opaque-credential"));
+        assertFalse(authVariants.standardOutput().contains("opaque-request-credential"));
         assertFalse(authVariants.standardOutput().contains("opaque-cookie"));
         assertFalse(partial.standardOutput().contains("ghp_"));
         assertTrue(partial.standardOutput().contains("[REDACTED]"));

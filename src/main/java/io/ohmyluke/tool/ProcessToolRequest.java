@@ -37,7 +37,7 @@ public record ProcessToolRequest(
     private static final Pattern SENSITIVE_HEADER = Pattern.compile(
             "(?i)^[a-z0-9_-]*(?:api[-_]?key|authorization|auth[-_]?token|cookie|client[-_]?secret)\\s*:");
     private static final Set<String> CREDENTIAL_OPTIONS = Set.of(
-            "-u", "--user", "--proxy-user", "--cookie");
+            "-u", "--user", "--proxy-user", "--cookie", "--oauth2-bearer", "--_auth", "--auth");
     private static final Pattern CREDENTIAL_PARAMETER = Pattern.compile(
             "(?i)(?:^|[?&;,\\s])(?:api[_-]?key|token|secret|password|passwd|authorization|auth|cookie|credential)\\s*=");
     private static final List<Pattern> SECRET_VALUES = List.of(

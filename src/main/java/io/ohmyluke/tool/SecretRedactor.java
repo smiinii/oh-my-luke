@@ -11,10 +11,10 @@ final class SecretRedactor {
             Pattern.compile("AKIA[0-9A-Z]{16}"),
             Pattern.compile("eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"),
             Pattern.compile("(?i)(?:proxy-)?authorization\\s*[:=][^\\r\\n]*"),
-            Pattern.compile("(?i)set-cookie\\s*:[^\\r\\n]*"),
+            Pattern.compile("(?i)(?:set-)?cookie\\s*:[^\\r\\n]*"),
             Pattern.compile("(?i)(token|secret|password|api[_-]?key)\\s*[:=]\\s*[^\\s]+"));
     private static final Pattern TRUNCATED_SECRET_SUFFIX = Pattern.compile(
-            "(?i)(?:gh[pousr]_[A-Za-z0-9_]*|sk-[A-Za-z0-9_-]*|AKIA[0-9A-Z]*|eyJ[A-Za-z0-9_.-]*|(?:(?:proxy-)?authorization|set-cookie|token|secret|password|api[_-]?key)\\s*[:=].*)$");
+            "(?i)(?:gh[pousr]_[A-Za-z0-9_]*|sk-[A-Za-z0-9_-]*|AKIA[0-9A-Z]*|eyJ[A-Za-z0-9_.-]*|(?:(?:proxy-)?authorization|(?:set-)?cookie|token|secret|password|api[_-]?key)\\s*[:=].*)$");
 
     String redact(String value, boolean truncated) {
         String redacted = value;

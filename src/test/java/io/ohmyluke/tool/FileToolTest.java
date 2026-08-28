@@ -290,9 +290,11 @@ class FileToolTest {
     @Test
     void serializesTheSameMutationAcrossIndependentJvmProcesses() throws Exception {
         Path project = Files.createDirectory(temporaryDirectory.resolve("cross-process-project")).toRealPath();
-        Path firstReady = temporaryDirectory.resolve("first.ready");
-        Path secondReady = temporaryDirectory.resolve("second.ready");
-        Path start = temporaryDirectory.resolve("start");
+        Path firstStarted = temporaryDirectory.resolve("first.started");
+        Path firstEntered = temporaryDirectory.resolve("first.entered");
+        Path secondStarted = temporaryDirectory.resolve("second.started");
+        Path secondEntered = temporaryDirectory.resolve("second.entered");
+        Path release = temporaryDirectory.resolve("release");
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         String classpath = System.getProperty("java.class.path");
         Process first = new ProcessBuilder(
@@ -301,31 +303,40 @@ class FileToolTest {
                         classpath,
                         FileToolProcessFixture.class.getName(),
                         project.toString(),
-                        firstReady.toString(),
-                        start.toString())
+                        "hold",
+                        firstStarted.toString(),
+                        firstEntered.toString(),
+                        release.toString())
                 .start();
-        Process second = new ProcessBuilder(
+        Process second = null;
+        try {
+            awaitFile(firstEntered);
+            second = new ProcessBuilder(
                         java,
                         "-cp",
                         classpath,
                         FileToolProcessFixture.class.getName(),
                         project.toString(),
-                        secondReady.toString(),
-                        start.toString())
-                .start();
-        try {
-            awaitFile(firstReady);
-            awaitFile(secondReady);
-            Files.writeString(start, "start");
+                        "wait",
+                        secondStarted.toString(),
+                        secondEntered.toString(),
+                        release.toString())
+                    .start();
+            awaitFile(secondStarted);
+            Thread.sleep(150);
+            assertFalse(Files.exists(secondEntered), "second JVM entered while the first held the OS lock");
+            Files.writeString(release, "release");
 
             assertTrue(first.waitFor(10, TimeUnit.SECONDS));
             assertTrue(second.waitFor(10, TimeUnit.SECONDS));
             assertEquals(0, first.exitValue(), new String(first.getErrorStream().readAllBytes()));
             assertEquals(0, second.exitValue(), new String(second.getErrorStream().readAllBytes()));
-            assertTrue(Files.isDirectory(project.resolve("created")));
+            assertTrue(Files.exists(secondEntered));
         } finally {
             first.destroyForcibly();
-            second.destroyForcibly();
+            if (second != null) {
+                second.destroyForcibly();
+            }
         }
     }
 

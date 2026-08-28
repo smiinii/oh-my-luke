@@ -3,11 +3,15 @@ package io.ohmyluke.tool;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.time.Duration;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -74,6 +78,39 @@ class SecureFileOperationsTest {
 
         assertEquals("original", Files.readString(original));
         assertEquals("outside", Files.readString(outside));
+    }
+
+    @Test
+    void rejectsAFifoWithoutBlocking() throws Exception {
+        Path realTemporary = temporaryDirectory.toRealPath();
+        Path fifo = realTemporary.resolve("input.fifo");
+        Process mkfifo = new ProcessBuilder("/usr/bin/mkfifo", fifo.toString()).start();
+        assertEquals(0, mkfifo.waitFor());
+
+        assertTimeoutPreemptively(
+                Duration.ofSeconds(1),
+                () -> assertThrows(
+                        FileCheckpointException.class,
+                        () -> SecureFileOperations.readAllBytes(fifo, 1024)));
+    }
+
+    @Test
+    void preservesExecutablePermissionsWhenReplacingARegularFile() throws IOException {
+        Path realTemporary = temporaryDirectory.toRealPath();
+        Path executable = Files.writeString(realTemporary.resolve("script.sh"), "before");
+        Files.setPosixFilePermissions(executable, Set.of(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.OWNER_EXECUTE));
+
+        SecureFileOperations.writeFile(executable, "after".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(
+                Set.of(
+                        PosixFilePermission.OWNER_READ,
+                        PosixFilePermission.OWNER_WRITE,
+                        PosixFilePermission.OWNER_EXECUTE),
+                Files.getPosixFilePermissions(executable));
     }
 
     private SwappedParent swappedParent(String prefix) throws IOException {

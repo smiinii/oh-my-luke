@@ -6,11 +6,7 @@ import com.sun.jna.Native;
 import com.sun.jna.NativeLong;
 import com.sun.jna.Platform;
 import com.sun.jna.Pointer;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.List;
 import java.util.UUID;
 
 /** Descriptor-relative POSIX operations that cannot follow a swapped symbolic-link component. */
@@ -24,14 +20,21 @@ final class SecureFileOperations {
     private static final int O_DIRECTORY = Platform.isMac() ? 0x100000 : 0x10000;
     private static final int O_NOFOLLOW = Platform.isMac() ? 0x0100 : 0x20000;
     private static final int O_CLOEXEC = Platform.isMac() ? 0x01000000 : 0x80000;
+    private static final int O_NONBLOCK = Platform.isMac() ? 0x0004 : 0x0800;
     private static final int AT_REMOVEDIR = Platform.isMac() ? 0x0080 : 0x0200;
     private static final int ENOENT = 2;
+    private static final int ENOTDIR = 20;
+    private static final int ELOOP = Platform.isMac() ? 62 : 40;
+    private static final int S_IFMT = 0170000;
+    private static final int S_IFREG = 0100000;
+    private static final int MAX_DELETE_ENTRIES = 10_000;
 
     private SecureFileOperations() {}
 
     static byte[] readAllBytes(Path target, long maximumBytes) {
         requirePosix();
-        try (Descriptor descriptor = openTarget(target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)) {
+        try (Descriptor descriptor = openTarget(target, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)) {
+            requireRegularFile(descriptor, target);
             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
             Memory buffer = new Memory(BUFFER_BYTES);
             long total = 0;
@@ -55,6 +58,7 @@ final class SecureFileOperations {
     static void writeFile(Path target, byte[] content) {
         requirePosix();
         try (Descriptor parent = openParent(target)) {
+            int mode = existingFileMode(parent, target);
             String temporary = ".oml-write-" + UUID.randomUUID();
             int raw = POSIX.openat(
                     parent.value(), temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -63,7 +67,7 @@ final class SecureFileOperations {
             }
             boolean renamed = false;
             try (Descriptor descriptor = new Descriptor(raw)) {
-                if (POSIX.fchmod(descriptor.value(), 0600) != 0) {
+                if (POSIX.fchmod(descriptor.value(), mode) != 0) {
                     throw nativeFailure("failed to restrict a secure temporary file", target);
                 }
                 Memory buffer = new Memory(Math.max(1, content.length));
@@ -121,30 +125,119 @@ final class SecureFileOperations {
 
     static void deleteTree(Path target) {
         requirePosix();
-        if (Files.notExists(target, LinkOption.NOFOLLOW_LINKS)) {
-            return;
-        }
-        List<Path> entries;
-        try (var walked = Files.walk(target)) {
-            entries = walked.sorted(Comparator.comparingInt(Path::getNameCount).reversed()).toList();
-        } catch (java.io.IOException error) {
-            throw new FileCheckpointException("failed to enumerate a path for secure deletion: " + target, error);
-        }
-        for (Path entry : entries) {
-            unlink(entry, Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS));
+        try (Descriptor parent = openParent(target)) {
+            DeleteBudget budget = new DeleteBudget();
+            deleteEntry(parent, target.getFileName().toString(), target, budget);
         }
     }
 
-    private static void unlink(Path target, boolean directory) {
-        try (Descriptor parent = openParent(target)) {
-            if (POSIX.unlinkat(parent.value(), target.getFileName().toString(), directory ? AT_REMOVEDIR : 0) != 0) {
-                int error = Native.getLastError();
-                if (error != ENOENT) {
-                    throw new FileCheckpointException(
-                            "secure descriptor-relative delete failed (errno " + error + "): " + target);
+    private static void deleteEntry(Descriptor parent, String name, Path display, DeleteBudget budget) {
+        budget.consume(display);
+        int raw = POSIX.openat(
+                parent.value(), name, O_RDONLY | O_DIRECTORY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+        if (raw >= 0) {
+            try (Descriptor directory = new Descriptor(raw)) {
+                deleteDirectoryContents(directory, display, budget);
+            }
+            if (POSIX.unlinkat(parent.value(), name, AT_REMOVEDIR) != 0 && Native.getLastError() != ENOENT) {
+                throw nativeFailure("secure descriptor-relative directory delete failed", display);
+            }
+            return;
+        }
+        int openError = Native.getLastError();
+        if (openError == ENOENT) {
+            return;
+        }
+        if (openError != ENOTDIR && openError != ELOOP) {
+            throw new FileCheckpointException(
+                    "failed to open an entry for secure deletion (errno " + openError + "): " + display);
+        }
+        if (POSIX.unlinkat(parent.value(), name, 0) != 0 && Native.getLastError() != ENOENT) {
+            throw nativeFailure("secure descriptor-relative file delete failed", display);
+        }
+    }
+
+    private static void deleteDirectoryContents(Descriptor directory, Path display, DeleteBudget budget) {
+        int duplicate = POSIX.dup(directory.value());
+        if (duplicate < 0) {
+            throw nativeFailure("failed to duplicate a directory descriptor", display);
+        }
+        Pointer stream = POSIX.fdopendir(duplicate);
+        if (stream == null) {
+            POSIX.close(duplicate);
+            throw nativeFailure("failed to open a secure directory stream", display);
+        }
+        try {
+            while (true) {
+                Native.setLastError(0);
+                Pointer entry = POSIX.readdir(stream);
+                if (entry == null) {
+                    int error = Native.getLastError();
+                    if (error != 0) {
+                        throw new FileCheckpointException(
+                                "secure directory enumeration failed (errno " + error + "): " + display);
+                    }
+                    return;
+                }
+                String name = directoryEntryName(entry, display);
+                if (!name.equals(".") && !name.equals("..")) {
+                    deleteEntry(directory, name, display.resolve(name), budget);
                 }
             }
+        } finally {
+            POSIX.closedir(stream);
         }
+    }
+
+    private static String directoryEntryName(Pointer entry, Path display) {
+        int offset = Platform.isMac() ? 21 : 19;
+        int length = Platform.isMac()
+                ? Short.toUnsignedInt(entry.getShort(18))
+                : Math.max(0, Short.toUnsignedInt(entry.getShort(16)) - offset);
+        if (length <= 0 || length > 1024) {
+            throw new FileCheckpointException("invalid native directory entry while deleting: " + display);
+        }
+        byte[] raw = entry.getByteArray(offset, length);
+        int end = 0;
+        while (end < raw.length && raw[end] != 0) {
+            end++;
+        }
+        String name = new String(raw, 0, end, java.nio.charset.StandardCharsets.UTF_8);
+        if (name.isEmpty() || name.indexOf('/') >= 0 || name.indexOf('\0') >= 0) {
+            throw new FileCheckpointException("invalid native directory entry while deleting: " + display);
+        }
+        return name;
+    }
+
+    private static int existingFileMode(Descriptor parent, Path target) {
+        int raw = POSIX.openat(
+                parent.value(),
+                target.getFileName().toString(),
+                O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+        if (raw < 0) {
+            if (Native.getLastError() == ENOENT) {
+                return 0600;
+            }
+            throw nativeFailure("failed to inspect an existing file securely", target);
+        }
+        try (Descriptor existing = new Descriptor(raw)) {
+            return requireRegularFile(existing, target) & 07777;
+        }
+    }
+
+    private static int requireRegularFile(Descriptor descriptor, Path target) {
+        Memory status = new Memory(512);
+        status.clear();
+        if (POSIX.fstat(descriptor.value(), status) != 0) {
+            throw nativeFailure("failed to inspect an opened file securely", target);
+        }
+        int mode = Platform.isMac()
+                ? Short.toUnsignedInt(status.getShort(4))
+                : status.getInt(Platform.isARM() ? 16 : 24);
+        if ((mode & S_IFMT) != S_IFREG) {
+            throw new FileCheckpointException("secure file operation requires a regular file: " + target);
+        }
+        return mode;
     }
 
     private static Descriptor openTarget(Path target, int flags) {
@@ -206,6 +299,18 @@ final class SecureFileOperations {
         }
     }
 
+    private static final class DeleteBudget {
+        private int entries;
+
+        void consume(Path path) {
+            entries++;
+            if (entries > MAX_DELETE_ENTRIES) {
+                throw new FileCheckpointException(
+                        "secure recursive delete exceeds " + MAX_DELETE_ENTRIES + " entries: " + path);
+            }
+        }
+    }
+
     private interface Posix extends Library {
         int open(String path, int flags);
         int openat(int directory, String path, int flags);
@@ -214,6 +319,11 @@ final class SecureFileOperations {
         NativeLong write(int descriptor, Pointer buffer, NativeLong count);
         int fsync(int descriptor);
         int fchmod(int descriptor, int mode);
+        int fstat(int descriptor, Pointer status);
+        int dup(int descriptor);
+        Pointer fdopendir(int descriptor);
+        Pointer readdir(Pointer directory);
+        int closedir(Pointer directory);
         int renameat(int sourceDirectory, String source, int destinationDirectory, String destination);
         int mkdirat(int directory, String path, int mode);
         int unlinkat(int directory, String path, int flags);
