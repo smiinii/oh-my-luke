@@ -21,7 +21,9 @@ public final class ProcessToolFixture {
                             + "Cookie=session=opaque-equals-cookie\n"
                             + "Set-Cookie=session=opaque-equals-set-cookie\n"
                             + "fortuneCookie=chocolate\n"
-                            + "acceptCookie=false\n");
+                            + "acceptCookie=false\n"
+                            + "{\"Cookie\":\"opaque-json-cookie\",\"Authorization\":\"Bearer opaque-json-auth\"}\n");
+            case "json-secret" -> System.out.print("{\"Cookie\":\"opaque-json-cookie-value\"}");
             case "large" -> System.out.print("x".repeat(Integer.parseInt(arguments[1])));
             case "sleep" -> Thread.sleep(Long.parseLong(arguments[1]));
             case "spawn" -> {

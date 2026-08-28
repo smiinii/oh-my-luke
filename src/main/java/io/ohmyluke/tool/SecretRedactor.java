@@ -10,11 +10,13 @@ final class SecretRedactor {
             Pattern.compile("sk-[A-Za-z0-9_-]{20,}"),
             Pattern.compile("AKIA[0-9A-Z]{16}"),
             Pattern.compile("eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"),
+            Pattern.compile(
+                    "(?i)[\\\"'](?:(?:proxy-)?authorization|(?:set-)?cookie|token|secret|password|api[_-]?key)[\\\"']\\s*:\\s*[\\\"'][^\\\"'\\r\\n]*[\\\"']"),
             Pattern.compile("(?i)(?:proxy-)?authorization\\s*[:=][^\\r\\n]*"),
             Pattern.compile("(?i)(?<![A-Za-z0-9_-])(?:set-)?cookie\\s*[:=][^\\r\\n]*"),
             Pattern.compile("(?i)(token|secret|password|api[_-]?key)\\s*[:=]\\s*[^\\s]+"));
     private static final Pattern TRUNCATED_SECRET_SUFFIX = Pattern.compile(
-            "(?i)(?:gh[pousr]_[A-Za-z0-9_]*|sk-[A-Za-z0-9_-]*|AKIA[0-9A-Z]*|eyJ[A-Za-z0-9_.-]*|(?<![A-Za-z0-9_-])(?:set-)?cookie\\s*[:=].*|(?:(?:proxy-)?authorization|token|secret|password|api[_-]?key)\\s*[:=].*)$");
+            "(?i)(?:gh[pousr]_[A-Za-z0-9_]*|sk-[A-Za-z0-9_-]*|AKIA[0-9A-Z]*|eyJ[A-Za-z0-9_.-]*|[\\\"'](?:(?:proxy-)?authorization|(?:set-)?cookie|token|secret|password|api[_-]?key)[\\\"']\\s*:\\s*[\\\"'][^\\r\\n]*|(?<![A-Za-z0-9_-])(?:set-)?cookie\\s*[:=].*|(?:(?:proxy-)?authorization|token|secret|password|api[_-]?key)\\s*[:=].*)$");
 
     String redact(String value, boolean truncated) {
         String redacted = value;

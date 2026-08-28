@@ -237,6 +237,7 @@ class ProcessToolTest {
         ProcessToolResult secret = tool.execute(javaRequest(project, "secret"));
         ProcessToolResult opaque = tool.execute(javaRequest(project, "opaque-secrets"));
         ProcessToolResult authVariants = tool.execute(javaRequest(project, "auth-variants"));
+        ProcessToolResult partialJson = tool.execute(javaRequest(project, "json-secret").withOutputLimit(24));
         ProcessToolResult partial = tool.execute(javaRequest(project, "secret").withOutputLimit(10));
         ProcessToolResult large = tool.execute(javaRequest(project, "large", "4096").withOutputLimit(128));
 
@@ -252,6 +253,10 @@ class ProcessToolTest {
         assertFalse(authVariants.standardOutput().contains("opaque-equals-set-cookie"));
         assertTrue(authVariants.standardOutput().contains("fortuneCookie=chocolate"));
         assertTrue(authVariants.standardOutput().contains("acceptCookie=false"));
+        assertFalse(authVariants.standardOutput().contains("opaque-json-cookie"));
+        assertFalse(authVariants.standardOutput().contains("opaque-json-auth"));
+        assertFalse(partialJson.standardOutput().contains("opaque"));
+        assertTrue(partialJson.standardOutput().contains("[REDACTED]"));
         assertFalse(partial.standardOutput().contains("ghp_"));
         assertTrue(partial.standardOutput().contains("[REDACTED]"));
         assertEquals(128, large.standardOutput().length());
