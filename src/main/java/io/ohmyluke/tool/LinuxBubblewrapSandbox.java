@@ -52,8 +52,14 @@ public final class LinuxBubblewrapSandbox implements ProcessSandbox {
             }
         }
         command.addAll(List.of("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"));
-        bind(command, specification.workspaceRoot());
-        bind(command, specification.isolatedHome());
+        Path workspaceParent = specification.workspaceRoot().getParent();
+        Path homeParent = specification.isolatedHome().getParent();
+        if (workspaceParent != null && workspaceParent.equals(homeParent)) {
+            bind(command, workspaceParent);
+        } else {
+            bind(command, specification.workspaceRoot());
+            bind(command, specification.isolatedHome());
+        }
         command.add("--chdir");
         command.add(specification.workingDirectory().toString());
         command.add("--");
