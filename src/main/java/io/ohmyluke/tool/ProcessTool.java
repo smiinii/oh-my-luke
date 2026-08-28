@@ -23,6 +23,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 
 /** Runs explicit executables in a disposable project copy and a verified OS sandbox. */
 public final class ProcessTool {
@@ -84,11 +87,6 @@ public final class ProcessTool {
             return denied(
                     "process.credential-broker-required",
                     "Raw credentials are never injected; a scoped credential broker is required");
-        }
-        if (request.networkRequested() && !request.environment().isEmpty()) {
-            return denied(
-                    "process.credential-broker-required",
-                    "Networked processes cannot receive caller-provided environment values; use a scoped credential broker");
         }
         if (request.capability() == io.ohmyluke.policy.ToolCapability.DOCKER_ACCESS
                 || request.capability() == io.ohmyluke.policy.ToolCapability.OUTSIDE_PROJECT_ACCESS) {
@@ -167,7 +165,8 @@ public final class ProcessTool {
                     "Sandboxed process could not start: " + error.getClass().getSimpleName());
         }
 
-        try (ExecutorService readers = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (DescendantTracker descendants = new DescendantTracker(process);
+                ExecutorService readers = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<CapturedOutput> stdout = readers.submit(
                     () -> capture(process.getInputStream(), request.maxOutputBytes()));
             Future<CapturedOutput> stderr = readers.submit(
@@ -180,7 +179,9 @@ public final class ProcessTool {
                 completed = false;
             }
             if (!completed) {
-                terminateTree(process);
+                terminateTree(process, descendants);
+            } else {
+                descendants.terminateTracked();
             }
             CapturedOutput standardOutput = awaitOutput(stdout);
             CapturedOutput standardError = awaitOutput(stderr);
@@ -230,10 +231,11 @@ public final class ProcessTool {
         }
     }
 
-    private static void terminateTree(Process process) {
-        List<ProcessHandle> descendants = new ArrayList<>(process.descendants().toList());
-        for (int index = descendants.size() - 1; index >= 0; index--) {
-            descendants.get(index).destroyForcibly();
+    private static void terminateTree(Process process, DescendantTracker tracker) {
+        tracker.terminateTracked();
+        List<ProcessHandle> current = new ArrayList<>(process.descendants().toList());
+        for (int index = current.size() - 1; index >= 0; index--) {
+            current.get(index).destroyForcibly();
         }
         process.destroyForcibly();
         try {
@@ -282,4 +284,48 @@ public final class ProcessTool {
     }
 
     private record CapturedOutput(String text, boolean truncated) {}
+
+    private static final class DescendantTracker implements AutoCloseable {
+        private final Process process;
+        private final ConcurrentHashMap<Long, ProcessHandle> observed = new ConcurrentHashMap<>();
+        private final AtomicBoolean running = new AtomicBoolean(true);
+        private final Thread watcher;
+
+        private DescendantTracker(Process process) {
+            this.process = process;
+            this.watcher = Thread.ofVirtual().name("oml-process-descendants").start(() -> {
+                while (running.get() || process.isAlive()) {
+                    capture();
+                    LockSupport.parkNanos(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1));
+                }
+                capture();
+            });
+        }
+
+        private void capture() {
+            process.descendants().forEach(handle -> observed.putIfAbsent(handle.pid(), handle));
+        }
+
+        private void terminateTracked() {
+            capture();
+            List<ProcessHandle> handles = new ArrayList<>(observed.values());
+            for (int index = handles.size() - 1; index >= 0; index--) {
+                ProcessHandle handle = handles.get(index);
+                if (handle.isAlive()) {
+                    handle.destroyForcibly();
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            running.set(false);
+            try {
+                watcher.join(100);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            }
+            terminateTracked();
+        }
+    }
 }

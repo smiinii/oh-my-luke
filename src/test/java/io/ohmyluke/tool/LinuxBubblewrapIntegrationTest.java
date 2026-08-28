@@ -6,14 +6,19 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import io.ohmyluke.policy.PermissionGrantLedger;
 import io.ohmyluke.policy.ToolCapability;
+import io.ohmyluke.policy.ToolPermissionGrant;
 import io.ohmyluke.policy.ToolPermissionPolicy;
 import java.io.IOException;
+import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
@@ -86,13 +91,95 @@ class LinuxBubblewrapIntegrationTest {
         }
     }
 
+    @Test
+    void realBubblewrapBlocksNetworkUntilTheExactProcessIsApproved() throws Exception {
+        LinuxBubblewrapSandbox sandbox = new LinuxBubblewrapSandbox();
+        Assumptions.assumeTrue(sandbox.available(), "bubblewrap is not installed");
+        Assumptions.assumeTrue(Files.isExecutable(Path.of("/usr/bin/curl")), "curl is not installed");
+        Path project = Files.createDirectory(temporaryDirectory.resolve("network-project"));
+        try (ExecutorService listener = Executors.newVirtualThreadPerTaskExecutor();
+                ServerSocket server = new ServerSocket(0)) {
+            AtomicBoolean connected = new AtomicBoolean();
+            listener.submit(() -> {
+                try (java.net.Socket ignored = server.accept()) {
+                    connected.set(true);
+                } catch (IOException ignored) {
+                    // Test cleanup or the isolated network branch.
+                }
+            });
+            List<String> curlArguments = List.of(
+                    "--max-time", "1", "http://127.0.0.1:" + server.getLocalPort());
+            ProcessTool local = tool(project, sandbox);
+            ProcessToolResult blocked = local.execute(request(
+                    "network-blocked",
+                    Path.of("/usr/bin/curl"),
+                    curlArguments));
+            assertFalse(connected.get());
+            ProcessToolRequest request = request(
+                            "network-approved",
+                            Path.of("/usr/bin/curl"),
+                            curlArguments)
+                    .withCapability(ToolCapability.NETWORK_ACCESS, "network:any");
+            ToolPermissionGrant grant = ToolPermissionGrant.once(
+                    "network-grant",
+                    local.permissionRequest(request),
+                    System.currentTimeMillis() + 60_000);
+            ProcessTool approved = tool(project, sandbox, List.of(grant));
+
+            approved.execute(request);
+            for (int attempt = 0; attempt < 20 && !connected.get(); attempt++) {
+                Thread.sleep(10);
+            }
+            assertNotEquals(0, blocked.exitCode());
+            assertEquals(true, connected.get());
+        }
+    }
+
+    @Test
+    void realBubblewrapTimeoutRemovesDescendantsFromItsPidNamespace() throws Exception {
+        LinuxBubblewrapSandbox sandbox = new LinuxBubblewrapSandbox();
+        Assumptions.assumeTrue(sandbox.available(), "bubblewrap is not installed");
+        Assumptions.assumeTrue(Files.isExecutable(Path.of("/usr/bin/python3")), "python3 is not installed");
+        Path project = Files.createDirectory(temporaryDirectory.resolve("timeout-project"));
+        String marker = "oml-bwrap-child-" + java.util.UUID.randomUUID();
+        String program = "import subprocess,sys,time; "
+                + "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)','" + marker + "']); "
+                + "time.sleep(30)";
+        ProcessToolRequest request = request(
+                        "timeout-tree",
+                        Path.of("/usr/bin/python3"),
+                        List.of("-c", program))
+                .withTimeout(Duration.ofMillis(200));
+
+        ProcessToolResult result = tool(project, sandbox).execute(request);
+        for (int attempt = 0; attempt < 20 && processWithArgument(marker); attempt++) {
+            Thread.sleep(10);
+        }
+
+        assertEquals(true, result.timedOut());
+        assertFalse(processWithArgument(marker));
+    }
+
     private static ProcessTool tool(Path project, ProcessSandbox sandbox) {
+        return tool(project, sandbox, List.of());
+    }
+
+    private static ProcessTool tool(
+            Path project,
+            ProcessSandbox sandbox,
+            List<ToolPermissionGrant> grants) {
         ToolPermissionPolicy permissions = new ToolPermissionPolicy(
-                new PermissionGrantLedger(List.of()),
+                new PermissionGrantLedger(grants),
                 project,
                 false,
                 Clock.systemUTC());
         return new ProcessTool(project, "run-001", permissions, sandbox);
+    }
+
+    private static boolean processWithArgument(String marker) {
+        return ProcessHandle.allProcesses().anyMatch(handle -> handle.info().arguments()
+                .map(arguments -> java.util.Arrays.stream(arguments).anyMatch(argument -> argument.contains(marker)))
+                .orElse(false));
     }
 
     private static ProcessToolRequest request(String operationId, Path executable, List<String> arguments) {

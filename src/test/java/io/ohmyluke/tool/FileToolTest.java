@@ -228,6 +228,29 @@ class FileToolTest {
     }
 
     @Test
+    void reusesSuccessfulCreateMoveAndDeleteResultsWithoutUndoingThem() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
+        FileTool tool = tool(project, false, List.of());
+        FileToolRequest create = FileToolRequest.createDirectory("retry-create", project.resolve("created"));
+        assertTrue(tool.execute(create).executed());
+        assertTrue(tool.execute(create).executed());
+        assertTrue(Files.isDirectory(project.resolve("created")));
+
+        Path source = Files.writeString(project.resolve("source.txt"), "source");
+        Path destination = project.resolve("destination.txt");
+        FileToolRequest move = FileToolRequest.move("retry-move", source, destination);
+        assertTrue(tool.execute(move).executed());
+        assertTrue(tool.execute(move).executed());
+        assertFalse(Files.exists(source));
+        assertEquals("source", Files.readString(destination));
+
+        FileToolRequest delete = FileToolRequest.delete("retry-delete", destination);
+        assertTrue(tool.execute(delete).executed());
+        assertTrue(tool.execute(delete).executed());
+        assertFalse(Files.exists(destination));
+    }
+
+    @Test
     void refusesATamperedCheckpointBeforeTouchingAnyPath() throws IOException {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path source = Files.writeString(project.resolve("source.txt"), "before");

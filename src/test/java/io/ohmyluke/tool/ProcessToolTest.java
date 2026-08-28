@@ -141,15 +141,12 @@ class ProcessToolTest {
     }
 
     @Test
-    void doesNotInheritHostSecretsAndRejectsSecretEnvironmentNames() throws IOException {
+    void doesNotInheritHostSecretsAndRejectsEveryCallerEnvironmentValue() throws IOException {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
-        ProcessTool tool = tool(project, new TestVerifiedSandbox(), false, List.of());
-        ProcessToolRequest safe = javaRequest(project, "env", "OML_SAFE_VALUE")
-                .withEnvironment(Map.of("OML_SAFE_VALUE", "visible"));
-
-        ProcessToolResult result = tool.execute(safe);
-
-        assertEquals("visible", result.standardOutput());
+        ProcessToolRequest safe = javaRequest(project, "env", "OML_SAFE_VALUE");
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> safe.withEnvironment(Map.of("OML_SAFE_VALUE", "visible")));
         org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalArgumentException.class,
                 () -> safe.withEnvironment(Map.of("API_TOKEN", "secret")));
@@ -185,10 +182,13 @@ class ProcessToolTest {
         ProcessTool tool = tool(project, new TestVerifiedSandbox(), false, List.of());
 
         ProcessToolResult secret = tool.execute(javaRequest(project, "secret"));
+        ProcessToolResult opaque = tool.execute(javaRequest(project, "opaque-secrets"));
         ProcessToolResult large = tool.execute(javaRequest(project, "large", "4096").withOutputLimit(128));
 
         assertFalse(secret.standardOutput().contains("ghp_"));
         assertTrue(secret.standardOutput().contains("[REDACTED]"));
+        assertFalse(opaque.standardOutput().contains("AKIA"));
+        assertFalse(opaque.standardOutput().contains("opaque-secret"));
         assertEquals(128, large.standardOutput().length());
         assertTrue(large.outputTruncated());
     }

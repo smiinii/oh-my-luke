@@ -77,18 +77,14 @@ class MacOsSeatbeltSandboxTest {
     }
 
     @Test
-    void deniesChildProcessCreationInsteadOfLeavingDescendantsBehind() throws IOException {
+    void allowsBuildStyleChildrenButRemovesThemWhenTheParentExits() throws Exception {
         Path project = Files.createDirectory(temporaryDirectory.resolve("project"));
-        Path java = Path.of(System.getProperty("java.home"), "bin", "java").toRealPath();
         ProcessToolRequest request = new ProcessToolRequest(
                 "spawn-child",
-                java,
+                Path.of("/usr/bin/python3"),
                 List.of(
-                        "-cp",
-                        System.getProperty("java.class.path"),
-                        ProcessToolFixture.class.getName(),
-                        "spawn",
-                        java.toString()),
+                        "-c",
+                        "import subprocess; p=subprocess.Popen(['/bin/sleep','30']); print(p.pid, flush=True)"),
                 Path.of("."),
                 Map.of(),
                 Duration.ofSeconds(5),
@@ -98,8 +94,15 @@ class MacOsSeatbeltSandboxTest {
 
         ProcessToolResult result = tool(project).execute(request);
 
-        org.junit.jupiter.api.Assertions.assertNotEquals(0, result.exitCode());
+        assertEquals(0, result.exitCode(), result.standardError());
         assertFalse(result.timedOut());
+        long childPid = Long.parseLong(result.standardOutput().trim());
+        for (int attempt = 0; attempt < 20
+                && ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false);
+                attempt++) {
+            Thread.sleep(10);
+        }
+        assertFalse(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false));
     }
 
     @Test

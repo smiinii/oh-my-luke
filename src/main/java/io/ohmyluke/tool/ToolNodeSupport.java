@@ -56,7 +56,11 @@ final class ToolNodeSupport {
     static String processRequestFingerprint(ProcessToolRequest request) {
         StringBuilder encoded = new StringBuilder();
         append(encoded, request.operationId());
-        append(encoded, request.executable().toAbsolutePath().normalize().toString());
+        try {
+            append(encoded, request.executable().toRealPath().toString());
+        } catch (java.io.IOException error) {
+            throw new IllegalArgumentException("process executable must resolve before fingerprinting", error);
+        }
         appendList(encoded, request.arguments());
         append(encoded, request.workingDirectory().normalize().toString());
         appendMap(encoded, request.environment());

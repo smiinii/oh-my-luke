@@ -190,9 +190,17 @@ public final class ProcessWorkspace implements AutoCloseable {
 
     private static Path isolatedTemporaryBase() throws IOException {
         String operatingSystem = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        Path base = operatingSystem.contains("mac") && Files.isDirectory(Path.of("/private/tmp"))
-                ? Path.of("/private/tmp")
-                : Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize();
+        Path base;
+        if (operatingSystem.contains("mac") && Files.isDirectory(Path.of("/private/tmp"))) {
+            base = Path.of("/private/tmp");
+        } else if (!operatingSystem.contains("win") && Files.isDirectory(Path.of("/tmp"))) {
+            // Linux bubblewrap replaces /tmp with a tmpfs and mounts only this
+            // disposable child back in. CI may point java.io.tmpdir at /home,
+            // whose missing ancestors would otherwise make the fail-closed bind fail.
+            base = Path.of("/tmp");
+        } else {
+            base = Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize();
+        }
         if (!Files.isDirectory(base) || !Files.isWritable(base)) {
             throw new IOException("isolated temporary base is unavailable: " + base);
         }

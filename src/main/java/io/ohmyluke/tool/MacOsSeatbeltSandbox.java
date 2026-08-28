@@ -47,24 +47,43 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
         StringBuilder profile = new StringBuilder();
         profile.append("(version 1)\n");
         profile.append("(deny default)\n");
-        profile.append("(allow process-exec (literal \"").append(executable).append("\"))\n");
+        profile.append("(allow process*)\n");
         profile.append("(allow signal (target self))\n");
         profile.append("(allow sysctl-read)\n");
         profile.append("(allow mach-lookup)\n");
         profile.append("(allow ipc-posix-shm)\n");
-        profile.append("(allow file-read*)\n");
-        for (String userDataRoot : List.of(
-                "/Users",
-                "/home",
-                "/root",
-                "/Volumes",
-                "/Network",
-                "/private/tmp",
-                "/private/var/folders",
-                "/private/var/tmp")) {
-            if (Files.exists(Path.of(userDataRoot))) {
+        // Seatbelted launchers and dynamic loaders inspect path metadata outside the
+        // content allowlist. Metadata alone reveals no file contents; file-read-data
+        // remains limited to the runtime, executable, workspace, and isolated home.
+        profile.append("(allow file-read-metadata)\n");
+        for (String runtimeLink : List.of("/", "/private", "/tmp", "/var", "/etc")) {
+            profile.append("(allow file-read* (literal \"")
+                    .append(escape(runtimeLink))
+                    .append("\"))\n");
+        }
+        for (String runtimeRoot : List.of(
+                "/System",
+                "/usr",
+                "/bin",
+                "/sbin",
+                "/Library",
+                "/private/etc",
+                "/private/var",
+                "/private/preboot",
+                "/dev",
+                "/Applications",
+                "/opt",
+                "/cores")) {
+            if (Files.exists(Path.of(runtimeRoot))) {
+                profile.append("(allow file-read* (subpath \"")
+                        .append(escape(runtimeRoot))
+                        .append("\"))\n");
+            }
+        }
+        for (String deniedRuntimeData : List.of("/private/var/folders", "/private/var/tmp")) {
+            if (Files.exists(Path.of(deniedRuntimeData))) {
                 profile.append("(deny file-read* (subpath \"")
-                        .append(escape(userDataRoot))
+                        .append(escape(deniedRuntimeData))
                         .append("\"))\n");
             }
         }

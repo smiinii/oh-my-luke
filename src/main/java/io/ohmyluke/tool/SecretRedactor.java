@@ -8,8 +8,10 @@ final class SecretRedactor {
     private static final List<Pattern> TOKEN_PATTERNS = List.of(
             Pattern.compile("gh[pousr]_[A-Za-z0-9_]{20,}"),
             Pattern.compile("sk-[A-Za-z0-9_-]{20,}"),
+            Pattern.compile("AKIA[0-9A-Z]{16}"),
             Pattern.compile("eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"),
-            Pattern.compile("(?i)(token|secret|password|api[_-]?key|authorization)\\s*[:=]\\s*[^\\s]+"));
+            Pattern.compile("(?i)authorization\\s*[:=]\\s*(?:bearer\\s+)?[^\\s]+"),
+            Pattern.compile("(?i)(token|secret|password|api[_-]?key)\\s*[:=]\\s*[^\\s]+"));
 
     String redact(String value) {
         String redacted = value;

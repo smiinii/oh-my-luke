@@ -102,6 +102,34 @@ class ToolNodeTest {
     }
 
     @Test
+    void processFingerprintUsesTheResolvedExecutableIdentity() throws IOException {
+        Path java = Path.of(System.getProperty("java.home"), "bin", "java").toRealPath();
+        Path alternative = Files.isExecutable(Path.of("/usr/bin/true"))
+                ? Path.of("/usr/bin/true")
+                : java;
+        org.junit.jupiter.api.Assumptions.assumeFalse(java.equals(alternative.toRealPath()));
+        Path link = Files.createSymbolicLink(project.resolve("runner"), java);
+        ProcessTool tool = new ProcessTool(project, "run-001", permissions(project), new TestSandbox());
+        ToolArtifactStore artifacts = new ToolArtifactStore(project, "run-001");
+        ProcessToolRequest request = new ProcessToolRequest(
+                "resolved-executable",
+                link,
+                List.of("-version"),
+                Path.of("."),
+                Map.of(),
+                Duration.ofSeconds(5),
+                4096,
+                ToolCapability.LOCAL_PROCESS,
+                "local");
+        ProcessToolNode before = new ProcessToolNode(new NodeId("before"), tool, request, artifacts);
+        Files.delete(link);
+        Files.createSymbolicLink(link, alternative);
+        ProcessToolNode after = new ProcessToolNode(new NodeId("after"), tool, request, artifacts);
+
+        org.junit.jupiter.api.Assertions.assertNotEquals(before.fingerprint(), after.fingerprint());
+    }
+
+    @Test
     void processSetupFailureHasItsOwnStructuredFailureCodeAndCause() {
         ProcessSandbox failing = new ProcessSandbox() {
             @Override

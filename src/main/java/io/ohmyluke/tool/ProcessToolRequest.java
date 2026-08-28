@@ -4,7 +4,6 @@ import io.ohmyluke.policy.ToolCapability;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -33,9 +32,6 @@ public record ProcessToolRequest(
             ToolCapability.SANDBOX_BYPASS,
             ToolCapability.SECRET_DISCLOSURE,
             ToolCapability.PROTECTED_SYSTEM_DAMAGE);
-    private static final Pattern SENSITIVE_ENVIRONMENT = Pattern.compile(
-            ".*(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|AUTH|COOKIE|CREDENTIAL|PRIVATE_KEY).*",
-            Pattern.CASE_INSENSITIVE);
     private static final Pattern SENSITIVE_ARGUMENT_NAME = Pattern.compile(
             "(?i)^--?(token|secret|password|passwd|api[_-]?key|authorization|cookie|credential|private[_-]?key)(?:=.*)?$");
     private static final Pattern CREDENTIAL_PARAMETER = Pattern.compile(
@@ -43,6 +39,8 @@ public record ProcessToolRequest(
     private static final List<Pattern> SECRET_VALUES = List.of(
             Pattern.compile("gh[pousr]_[A-Za-z0-9_]{20,}"),
             Pattern.compile("sk-[A-Za-z0-9_-]{20,}"),
+            Pattern.compile("AKIA[0-9A-Z]{16}"),
+            Pattern.compile("(?i)authorization\\s*[:=]\\s*(?:bearer\\s+)?[^\\s]+"),
             Pattern.compile("eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"));
 
     public ProcessToolRequest {
@@ -63,7 +61,10 @@ public record ProcessToolRequest(
         }
         workingDirectory = Objects.requireNonNull(workingDirectory, "workingDirectory");
         environment = Map.copyOf(Objects.requireNonNull(environment, "environment"));
-        environment.forEach(ProcessToolRequest::validateEnvironment);
+        if (!environment.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "caller-provided environment values require a trusted configuration or credential broker");
+        }
         Objects.requireNonNull(timeout, "timeout");
         if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(Duration.ofHours(1)) > 0) {
             throw new IllegalArgumentException("timeout must be between zero and one hour");
@@ -137,26 +138,6 @@ public record ProcessToolRequest(
         return capability == ToolCapability.NETWORK_ACCESS
                 || capability == ToolCapability.DEPENDENCY_INSTALL
                 || capability == ToolCapability.EXTERNAL_WRITE;
-    }
-
-    private static void validateEnvironment(String name, String value) {
-        name = requireText(name, "environment name");
-        value = Objects.requireNonNull(value, "environment value");
-        validateNul(value, "environment value");
-        boolean secretValue = false;
-        for (Pattern pattern : SECRET_VALUES) {
-            if (pattern.matcher(value).find()) {
-                secretValue = true;
-                break;
-            }
-        }
-        if (SENSITIVE_ENVIRONMENT.matcher(name).matches() || secretValue) {
-            throw new IllegalArgumentException("raw secret environment values are not accepted: " + name);
-        }
-        String upper = name.toUpperCase(Locale.ROOT);
-        if (upper.equals("HOME") || upper.equals("PATH") || upper.equals("TMPDIR") || upper.equals("JAVA_TOOL_OPTIONS")) {
-            throw new IllegalArgumentException("OML owns the process environment entry: " + name);
-        }
     }
 
     private static boolean containsSecretValue(String value) {

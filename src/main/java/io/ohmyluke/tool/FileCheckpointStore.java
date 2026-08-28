@@ -30,6 +30,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -42,6 +44,7 @@ final class FileCheckpointStore {
     private static final long MAX_MANIFEST_BYTES = 48L * 1024 * 1024;
     private static final int INTEGRITY_KEY_BYTES = 32;
     private static final String INTEGRITY_KEY_FILE = "file-checkpoint-integrity.key";
+    private static final ConcurrentHashMap<Path, Object> JVM_LOCKS = new ConcurrentHashMap<>();
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     private final Path projectRoot;
@@ -66,6 +69,14 @@ final class FileCheckpointStore {
         Objects.requireNonNull(operation, "operation");
         Objects.requireNonNull(permission, "permission");
         String checkpointId = validateId(operation.operationId(), "operationId");
+        return withCheckpointLock(checkpointId, () -> captureLocked(operation, permission, roots));
+    }
+
+    private String captureLocked(
+            FileToolRequest operation,
+            ToolPermissionRequest permission,
+            List<Path> roots) {
+        String checkpointId = operation.operationId();
         List<Path> normalizedRoots = normalizeRoots(roots);
         validateRootShape(operation.operation(), normalizedRoots);
         validateBinding(operation, permission, normalizedRoots);
@@ -101,7 +112,15 @@ final class FileCheckpointStore {
     }
 
     void restore(String checkpointId) {
-        FileCheckpoint checkpoint = loadValidated(validateId(checkpointId, "checkpointId"));
+        String validated = validateId(checkpointId, "checkpointId");
+        withCheckpointLock(validated, () -> {
+            restoreLocked(validated);
+            return null;
+        });
+    }
+
+    private void restoreLocked(String checkpointId) {
+        FileCheckpoint checkpoint = loadValidated(checkpointId);
         List<Path> roots = checkpoint.roots().stream().map(Path::of).toList();
         for (Path root : roots) {
             rejectSymlinkComponents(root);
@@ -123,6 +142,68 @@ final class FileCheckpointStore {
                                 (FileSnapshot snapshot) -> Path.of(snapshot.path()).getNameCount())
                         .reversed())
                 .forEach(snapshot -> applyMetadata(Path.of(snapshot.path()), snapshot));
+    }
+
+    boolean alreadyApplied(
+            FileToolRequest operation,
+            ToolPermissionRequest permission,
+            List<Path> roots) {
+        String checkpointId = validateId(operation.operationId(), "operationId");
+        return withCheckpointLock(checkpointId, () -> {
+            Path path = checkpointPath(checkpointId);
+            if (Files.notExists(path, LinkOption.NOFOLLOW_LINKS)) {
+                return false;
+            }
+            List<Path> normalizedRoots = normalizeRoots(roots);
+            FileCheckpoint checkpoint = loadValidated(checkpointId);
+            validateSameRequest(checkpoint, operation, permission, normalizedRoots);
+            return switch (operation.operation()) {
+                case WRITE -> fileHasContent(normalizedRoots.getFirst(), operation.content());
+                case CREATE_DIRECTORY -> rootSnapshot(checkpoint, normalizedRoots.getFirst()).type()
+                                == SnapshotType.MISSING
+                        && Files.isDirectory(normalizedRoots.getFirst(), LinkOption.NOFOLLOW_LINKS);
+                case DELETE -> Files.notExists(normalizedRoots.getFirst(), LinkOption.NOFOLLOW_LINKS);
+                case MOVE -> moveWasApplied(checkpoint, normalizedRoots.get(0), normalizedRoots.get(1));
+                case READ -> false;
+            };
+        });
+    }
+
+    private boolean moveWasApplied(FileCheckpoint checkpoint, Path source, Path destination) {
+        if (Files.exists(source, LinkOption.NOFOLLOW_LINKS)
+                || rootSnapshot(checkpoint, destination).type() != SnapshotType.MISSING
+                || Files.notExists(destination, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        List<FileSnapshot> sourceSnapshots = checkpoint.snapshots().stream()
+                .filter(snapshot -> Path.of(snapshot.path()).startsWith(source))
+                .toList();
+        for (FileSnapshot snapshot : sourceSnapshots) {
+            Path expected = destination.resolve(source.relativize(Path.of(snapshot.path()))).normalize();
+            boolean matches = switch (snapshot.type()) {
+                case DIRECTORY -> Files.isDirectory(expected, LinkOption.NOFOLLOW_LINKS);
+                case FILE -> fileHasContent(expected, snapshot.content());
+                case MISSING -> false;
+            };
+            if (!matches) {
+                return false;
+            }
+        }
+        try (java.util.stream.Stream<Path> current = Files.walk(destination)) {
+            return current.count() == sourceSnapshots.size();
+        } catch (IOException error) {
+            return false;
+        }
+    }
+
+    private static boolean fileHasContent(Path path, byte[] expected) {
+        try {
+            return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                    && Files.size(path) == expected.length
+                    && java.util.Arrays.equals(Files.readAllBytes(path), expected);
+        } catch (IOException error) {
+            return false;
+        }
     }
 
     Path checkpointPath(String checkpointId) {
@@ -466,6 +547,30 @@ final class FileCheckpointStore {
         Files.createDirectories(checkpointRoot);
         if (!checkpointRoot.toRealPath().startsWith(projectRoot)) {
             throw new FileCheckpointException("checkpoint directory escapes the project");
+        }
+    }
+
+    private <T> T withCheckpointLock(String checkpointId, Supplier<T> action) {
+        Path lockPath = checkpointRoot.resolve(validateId(checkpointId, "checkpointId") + ".lock");
+        Object jvmLock = JVM_LOCKS.computeIfAbsent(lockPath, ignored -> new Object());
+        synchronized (jvmLock) {
+            try {
+                createCheckpointDirectory();
+                if (Files.isSymbolicLink(lockPath)) {
+                    throw new FileCheckpointException("file checkpoint lock must not be a symbolic link");
+                }
+                try (FileChannel channel = FileChannel.open(
+                                lockPath,
+                                StandardOpenOption.CREATE,
+                                StandardOpenOption.WRITE,
+                                LinkOption.NOFOLLOW_LINKS);
+                        java.nio.channels.FileLock ignored = channel.lock()) {
+                    restrictToCurrentUser(lockPath);
+                    return action.get();
+                }
+            } catch (IOException error) {
+                throw new FileCheckpointException("failed to lock file checkpoint", error);
+            }
         }
     }
 

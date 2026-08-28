@@ -97,12 +97,30 @@ public final class FileTool {
         if (request.operation() == FileOperation.READ) {
             return read(source, decision);
         }
+        List<Path> roots = destination == null ? List.of(source) : List.of(source, destination);
+        try {
+            if (checkpoints.alreadyApplied(request, permissionRequest, roots)) {
+                return new FileToolResult(
+                        decision,
+                        true,
+                        null,
+                        request.operationId(),
+                        "File operation was already applied; the immutable result was reused");
+            }
+        } catch (RuntimeException error) {
+            return new FileToolResult(
+                    decision,
+                    false,
+                    null,
+                    null,
+                    "File operation replay validation failed safely: " + error.getClass().getSimpleName());
+        }
         String checkpointId;
         try {
             checkpointId = checkpoints.capture(
                     request,
                     permissionRequest,
-                    destination == null ? List.of(source) : List.of(source, destination));
+                    roots);
         } catch (RuntimeException error) {
             return new FileToolResult(
                     decision,
