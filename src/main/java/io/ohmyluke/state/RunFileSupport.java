@@ -6,6 +6,7 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -19,18 +20,34 @@ final class RunFileSupport {
     private RunFileSupport() {}
 
     static Path normalizeRoot(Path projectRoot) {
-        return Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
+        Path normalized = Objects.requireNonNull(projectRoot, "projectRoot")
+                .toAbsolutePath()
+                .normalize();
+        try {
+            if (!Files.isDirectory(normalized)) {
+                throw new IllegalArgumentException("projectRoot must be an existing directory");
+            }
+            return normalized.toRealPath();
+        } catch (IOException error) {
+            throw new CheckpointException("failed to resolve project root: " + normalized, error);
+        }
     }
 
     static Path file(Path projectRoot, String runId, String fileName) {
         validateRunId(runId);
-        return projectRoot.resolve(".oml").resolve("runs").resolve(runId).resolve(fileName);
+        Path target = projectRoot.resolve(".oml").resolve("runs").resolve(runId).resolve(fileName);
+        rejectSymlinkEscape(projectRoot, target);
+        return target;
     }
 
     static void writeAtomically(Path target, String content) {
-        Path temporary = target.resolveSibling(target.getFileName() + ".tmp");
+        Path temporary = null;
         try {
             Files.createDirectories(target.getParent());
+            temporary = Files.createTempFile(
+                    target.getParent(),
+                    target.getFileName() + ".",
+                    ".tmp");
             writeDurably(temporary, content);
             moveAtomically(temporary, target);
         } catch (IOException error) {
@@ -41,12 +58,16 @@ final class RunFileSupport {
     }
 
     static void writeDurably(Path path, String content) throws IOException {
-        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        writeDurably(path, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    static void writeDurably(Path path, byte[] bytes) throws IOException {
         try (FileChannel channel = FileChannel.open(
                 path,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.WRITE)) {
+                StandardOpenOption.WRITE,
+                LinkOption.NOFOLLOW_LINKS)) {
             writeFully(channel, bytes);
             channel.force(true);
         }
@@ -59,14 +80,18 @@ final class RunFileSupport {
                 path,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.WRITE,
-                StandardOpenOption.APPEND)) {
+                StandardOpenOption.APPEND,
+                LinkOption.NOFOLLOW_LINKS)) {
             writeFully(channel, bytes);
             channel.force(true);
         }
     }
 
     static void forceFile(Path path) throws IOException {
-        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.WRITE)) {
+        try (FileChannel channel = FileChannel.open(
+                path,
+                StandardOpenOption.WRITE,
+                LinkOption.NOFOLLOW_LINKS)) {
             channel.force(true);
         }
     }
@@ -84,6 +109,9 @@ final class RunFileSupport {
     }
 
     static void deleteTemporary(Path path) {
+        if (path == null) {
+            return;
+        }
         try {
             Files.deleteIfExists(path);
         } catch (IOException ignored) {
@@ -102,6 +130,24 @@ final class RunFileSupport {
         Objects.requireNonNull(runId, "runId");
         if (!SAFE_RUN_ID.matcher(runId).matches()) {
             throw new IllegalArgumentException("invalid runId: " + runId);
+        }
+    }
+
+    private static void rejectSymlinkEscape(Path projectRoot, Path target) {
+        Path existing = target;
+        while (existing != null && Files.notExists(existing)) {
+            existing = existing.getParent();
+        }
+        if (existing == null) {
+            throw new CheckpointException("no existing ancestor for run path: " + target);
+        }
+        try {
+            Path realExisting = existing.toRealPath();
+            if (!realExisting.startsWith(projectRoot)) {
+                throw new CheckpointException("run path escapes project through a symbolic link: " + target);
+            }
+        } catch (IOException error) {
+            throw new CheckpointException("failed to validate run path: " + target, error);
         }
     }
 }

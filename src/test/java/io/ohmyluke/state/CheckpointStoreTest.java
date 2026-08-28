@@ -94,6 +94,30 @@ class CheckpointStoreTest {
         assertThrows(IllegalArgumentException.class, () -> store.statePath("../outside"));
     }
 
+    @Test
+    void rejectsCheckpointWhoseEmbeddedRunIdDoesNotMatchItsDirectory() throws IOException {
+        CheckpointStore store = new CheckpointStore(projectRoot, codec);
+        store.save(checkpoint("run-a", 1));
+        Path mismatched = store.statePath("run-b");
+        Files.createDirectories(mismatched.getParent());
+        Files.copy(store.statePath("run-a"), mismatched);
+
+        assertThrows(CheckpointException.class, () -> store.load("run-b"));
+    }
+
+    @Test
+    void rejectsRunDirectorySymbolicLinkThatEscapesTheProject() throws IOException {
+        Path configuredRoot = projectRoot.resolve("project");
+        Path outside = projectRoot.resolve("outside");
+        Files.createDirectories(configuredRoot.resolve(".oml/runs"));
+        Files.createDirectories(outside);
+        Files.createSymbolicLink(configuredRoot.resolve(".oml/runs/escape"), outside);
+        CheckpointStore store = new CheckpointStore(configuredRoot, codec);
+
+        assertThrows(CheckpointException.class, () -> store.save(checkpoint("escape", 1)));
+        assertFalse(Files.exists(outside.resolve("state.json")));
+    }
+
     private static RunCheckpoint checkpoint(String runId, int executedSteps) {
         NodeId current = new NodeId("node-" + executedSteps);
         RunState state = new RunState(

@@ -20,6 +20,7 @@ import io.ohmyluke.state.GraphSignature;
 import io.ohmyluke.state.HandoffNote;
 import io.ohmyluke.state.HandoffStore;
 import io.ohmyluke.state.RunEventCodec;
+import io.ohmyluke.state.RunLockManager;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -68,7 +69,8 @@ class OmlukeCliTest {
                 new GraphRunner(new GraphValidator()),
                 new CheckpointStore(projectRoot, new CheckpointCodec()),
                 new EventLogStore(projectRoot, new RunEventCodec()),
-                new HandoffStore(projectRoot));
+                new HandoffStore(projectRoot),
+                new RunLockManager(projectRoot));
     }
 
     private static GraphDefinition graph() {
@@ -94,6 +96,11 @@ class OmlukeCliTest {
     }
 
     private record TestNode(NodeId id) implements Node {
+        @Override
+        public String fingerprint() {
+            return "cli-test-node-v1";
+        }
+
         @Override
         public NodeResult execute(NodeContext context) {
             return NodeResult.success();

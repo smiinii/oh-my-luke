@@ -31,6 +31,18 @@ class GraphSignatureTest {
         assertNotEquals(GraphSignature.calculate(first), GraphSignature.calculate(changed));
     }
 
+    @Test
+    void nodeFingerprintChangeProducesDifferentSignature() {
+        GraphDefinition first = graph(
+                Set.of(node("a", "writer-v1"), node("b", "inspector-v1")),
+                5);
+        GraphDefinition changed = graph(
+                Set.of(node("a", "writer-v2"), node("b", "inspector-v1")),
+                5);
+
+        assertNotEquals(GraphSignature.calculate(first), GraphSignature.calculate(changed));
+    }
+
     private static GraphDefinition graph(Set<Node> nodes, int maxSteps) {
         NodeId a = new NodeId("a");
         NodeId b = new NodeId("b");
@@ -46,10 +58,14 @@ class GraphSignatureTest {
     }
 
     private static Node node(String value) {
-        return new TestNode(new NodeId(value));
+        return node(value, "test-node-v1");
     }
 
-    private record TestNode(NodeId id) implements Node {
+    private static Node node(String value, String fingerprint) {
+        return new TestNode(new NodeId(value), fingerprint);
+    }
+
+    private record TestNode(NodeId id, String fingerprint) implements Node {
         @Override
         public NodeResult execute(NodeContext context) {
             return NodeResult.success();

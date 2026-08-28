@@ -45,12 +45,53 @@ public final class GraphRunner {
     }
 
     public RunState resume(GraphDefinition graph, RunState state) {
+        Objects.requireNonNull(graph, "graph");
         Objects.requireNonNull(state, "state");
-        RunState current = state;
-        while (current.status() == RunStatus.RUNNING) {
-            current = step(graph, current);
+        validator.validate(graph);
+        if (state.status() != RunStatus.RUNNING) {
+            return state;
         }
-        return current;
+
+        PreparedGraph prepared = prepare(graph);
+        RunStatus status = state.status();
+        NodeId current = state.currentNode();
+        int executedSteps = state.executedSteps();
+        Map<String, String> values = new LinkedHashMap<>(state.values());
+        List<NodeId> path = new ArrayList<>(state.path());
+        List<TransitionEvent> events = new ArrayList<>(state.events());
+
+        while (status == RunStatus.RUNNING) {
+            if (graph.maxSteps() > 0 && executedSteps >= graph.maxSteps()) {
+                status = RunStatus.STEP_LIMIT_REACHED;
+                break;
+            }
+            Node node = prepared.nodesById().get(current);
+            if (node == null) {
+                throw new GraphExecutionException("no executable node found for " + current);
+            }
+            NodeResult result = execute(node, new NodeContext(values, executedSteps));
+            values.putAll(result.statePatch().updates());
+            Map<String, String> stateAfter = immutableState(values);
+            Edge selected = selectSingleEdge(
+                    current,
+                    prepared.outgoingEdges().getOrDefault(current, List.of()),
+                    result,
+                    stateAfter);
+
+            executedSteps++;
+            events.add(new TransitionEvent(
+                    executedSteps,
+                    current,
+                    result.outcome(),
+                    selected.to(),
+                    selected.condition().description(),
+                    result.statePatch(),
+                    stateAfter));
+            current = selected.to();
+            path.add(current);
+            status = nextStatus(graph, current, executedSteps);
+        }
+        return snapshot(status, current, executedSteps, values, path, events);
     }
 
     public RunState step(GraphDefinition graph, RunState state) {
@@ -60,13 +101,7 @@ public final class GraphRunner {
         if (state.status() != RunStatus.RUNNING) {
             return state;
         }
-
-        Map<NodeId, Node> nodesById = new LinkedHashMap<>();
-        graph.nodes().forEach(node -> nodesById.put(node.id(), node));
-        Map<NodeId, List<Edge>> outgoingEdges = new LinkedHashMap<>();
-        graph.edges().forEach(edge -> outgoingEdges
-                .computeIfAbsent(edge.from(), ignored -> new ArrayList<>())
-                .add(edge));
+        PreparedGraph prepared = prepare(graph);
 
         if (graph.maxSteps() > 0 && state.executedSteps() >= graph.maxSteps()) {
             return snapshot(
@@ -79,7 +114,7 @@ public final class GraphRunner {
         }
 
         NodeId current = state.currentNode();
-        Node node = nodesById.get(current);
+        Node node = prepared.nodesById().get(current);
         if (node == null) {
             throw new GraphExecutionException("no executable node found for " + current);
         }
@@ -88,7 +123,7 @@ public final class GraphRunner {
         Map<String, String> stateAfter = apply(state.values(), result.statePatch());
         Edge selected = selectSingleEdge(
                 current,
-                outgoingEdges.getOrDefault(current, List.of()),
+                prepared.outgoingEdges().getOrDefault(current, List.of()),
                 result,
                 stateAfter);
 
@@ -117,6 +152,16 @@ public final class GraphRunner {
             return RunStatus.STEP_LIMIT_REACHED;
         }
         return RunStatus.RUNNING;
+    }
+
+    private static PreparedGraph prepare(GraphDefinition graph) {
+        Map<NodeId, Node> nodesById = new LinkedHashMap<>();
+        graph.nodes().forEach(node -> nodesById.put(node.id(), node));
+        Map<NodeId, List<Edge>> outgoingEdges = new LinkedHashMap<>();
+        graph.edges().forEach(edge -> outgoingEdges
+                .computeIfAbsent(edge.from(), ignored -> new ArrayList<>())
+                .add(edge));
+        return new PreparedGraph(nodesById, outgoingEdges);
     }
 
     private static NodeResult execute(Node node, NodeContext context) {
@@ -167,4 +212,8 @@ public final class GraphRunner {
             List<TransitionEvent> events) {
         return new RunState(status, current, executedSteps, values, path, events);
     }
+
+    private record PreparedGraph(
+            Map<NodeId, Node> nodesById,
+            Map<NodeId, List<Edge>> outgoingEdges) {}
 }

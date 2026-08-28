@@ -79,6 +79,25 @@ class EventLogStoreTest {
     }
 
     @Test
+    void repairsATailTruncatedInsideAMultibyteUtf8Character() throws IOException {
+        EventLogStore store = new EventLogStore(projectRoot, new RunEventCodec());
+        RunEvent started = event(1, RunEventType.NODE_STARTED, "write", 0);
+        RunEvent completed = event(2, RunEventType.NODE_COMPLETED, "write", 1);
+        store.append(started);
+        Files.write(
+                store.eventsPath("run-001"),
+                new byte[] {(byte) 0xED, (byte) 0x95},
+                StandardOpenOption.APPEND);
+
+        EventLogReadResult interrupted = store.readAll("run-001");
+        assertEquals(List.of(started), interrupted.events());
+        assertTrue(interrupted.ignoredIncompleteTail());
+
+        store.append(completed);
+        assertEquals(List.of(started, completed), store.readAll("run-001").events());
+    }
+
+    @Test
     void rejectsCorruptionBeforeTheFinalLine() throws IOException {
         EventLogStore store = new EventLogStore(projectRoot, new RunEventCodec());
         RunEvent completed = event(2, RunEventType.NODE_COMPLETED, "write", 1);

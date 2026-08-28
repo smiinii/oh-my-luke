@@ -11,6 +11,9 @@ public final class RunEventCodec {
 
     public String encode(RunEvent event) {
         Objects.requireNonNull(event, "event");
+        if (event.schemaVersion() != RunEvent.CURRENT_SCHEMA_VERSION) {
+            throw new UnsupportedCheckpointVersionException(event.schemaVersion());
+        }
         try {
             return mapper.writeValueAsString(event);
         } catch (JsonProcessingException error) {

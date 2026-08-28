@@ -16,6 +16,9 @@ public final class CheckpointCodec {
 
     public String encode(RunCheckpoint checkpoint) {
         Objects.requireNonNull(checkpoint, "checkpoint");
+        if (checkpoint.schemaVersion() != RunCheckpoint.CURRENT_SCHEMA_VERSION) {
+            throw new UnsupportedCheckpointVersionException(checkpoint.schemaVersion());
+        }
         try {
             return mapper.writeValueAsString(checkpoint);
         } catch (JsonProcessingException error) {
@@ -27,6 +30,9 @@ public final class CheckpointCodec {
         Objects.requireNonNull(json, "json");
         try {
             JsonNode root = mapper.readTree(json);
+            if (root == null || !root.isObject()) {
+                throw new CheckpointException("checkpoint must be a JSON object");
+            }
             JsonNode versionNode = root.get("schemaVersion");
             if (versionNode == null || !versionNode.canConvertToInt()) {
                 throw new CheckpointException("checkpoint schemaVersion is missing or invalid");

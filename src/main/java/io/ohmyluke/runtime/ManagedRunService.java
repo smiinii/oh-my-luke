@@ -5,6 +5,7 @@ import io.ohmyluke.graph.GraphRunner;
 import io.ohmyluke.graph.NodeId;
 import io.ohmyluke.graph.RunState;
 import io.ohmyluke.graph.RunStatus;
+import io.ohmyluke.graph.TransitionEvent;
 import io.ohmyluke.state.CheckpointLoadResult;
 import io.ohmyluke.state.CheckpointPhase;
 import io.ohmyluke.state.CheckpointStore;
@@ -16,6 +17,7 @@ import io.ohmyluke.state.HandoffStore;
 import io.ohmyluke.state.RunCheckpoint;
 import io.ohmyluke.state.RunEvent;
 import io.ohmyluke.state.RunEventType;
+import io.ohmyluke.state.RunLockManager;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -26,16 +28,19 @@ public final class ManagedRunService {
     private final CheckpointStore checkpoints;
     private final EventLogStore eventLog;
     private final HandoffStore handoffs;
+    private final RunLockManager locks;
 
     public ManagedRunService(
             GraphRunner runner,
             CheckpointStore checkpoints,
             EventLogStore eventLog,
-            HandoffStore handoffs) {
+            HandoffStore handoffs,
+            RunLockManager locks) {
         this.runner = Objects.requireNonNull(runner, "runner");
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.eventLog = Objects.requireNonNull(eventLog, "eventLog");
         this.handoffs = Objects.requireNonNull(handoffs, "handoffs");
+        this.locks = Objects.requireNonNull(locks, "locks");
     }
 
     public RunState start(String runId, GraphDefinition graph, HandoffNote handoff) {
@@ -47,72 +52,69 @@ public final class ManagedRunService {
             GraphDefinition graph,
             Map<String, String> initialValues,
             HandoffNote handoff) {
-        Objects.requireNonNull(graph, "graph");
-        if (checkpoints.exists(runId)) {
-            throw new ManagedRunException("run already exists: " + runId);
+        try (RunLockManager.RunLease ignored = locks.acquire(runId)) {
+            Objects.requireNonNull(graph, "graph");
+            if (checkpoints.exists(runId)) {
+                throw new ManagedRunException("run already exists: " + runId);
+            }
+            RunState state = runner.start(graph, initialValues);
+            RunCheckpoint checkpoint = RunCheckpoint.current(
+                    runId,
+                    GraphSignature.calculate(graph),
+                    CheckpointPhase.READY,
+                    state);
+            checkpoints.save(checkpoint);
+            handoffs.save(runId, handoff);
+            append(checkpoint, RunEventType.RUN_STARTED, "run initialized");
+            if (state.status() == RunStatus.COMPLETED) {
+                append(checkpoint, RunEventType.RUN_COMPLETED, "start node is terminal");
+            }
+            return state;
         }
-        RunState state = runner.start(graph, initialValues);
-        RunCheckpoint checkpoint = RunCheckpoint.current(
-                runId,
-                GraphSignature.calculate(graph),
-                CheckpointPhase.READY,
-                state);
-        checkpoints.save(checkpoint);
-        handoffs.save(runId, handoff);
-        append(checkpoint, RunEventType.RUN_STARTED, "run initialized");
-        if (state.status() == RunStatus.COMPLETED) {
-            append(checkpoint, RunEventType.RUN_COMPLETED, "start node is terminal");
-        }
-        return state;
     }
 
     public RunState step(String runId, GraphDefinition graph) {
-        RunCheckpoint checkpoint = loadForAction(runId);
-        verifyGraph(checkpoint, graph);
-        return advance(graph, checkpoint).state();
+        try (RunLockManager.RunLease ignored = locks.acquire(runId)) {
+            RunCheckpoint checkpoint = loadForAction(runId);
+            verifyGraph(checkpoint, graph);
+            return advance(graph, checkpoint).state();
+        }
     }
 
     public RunState resume(String runId, GraphDefinition graph) {
-        RunCheckpoint checkpoint = loadForAction(runId);
-        verifyGraph(checkpoint, graph);
-        if (checkpoint.state().status() != RunStatus.RUNNING) {
-            return checkpoint.state();
+        try (RunLockManager.RunLease ignored = locks.acquire(runId)) {
+            RunCheckpoint checkpoint = loadForAction(runId);
+            verifyGraph(checkpoint, graph);
+            if (checkpoint.state().status() != RunStatus.RUNNING) {
+                return checkpoint.state();
+            }
+            append(checkpoint, RunEventType.RUN_RESUMED, resumeDetail(checkpoint));
+            RunCheckpoint current = checkpoint;
+            while (current.state().status() == RunStatus.RUNNING) {
+                current = advance(graph, current);
+            }
+            return current.state();
         }
-        append(checkpoint, RunEventType.RUN_RESUMED, resumeDetail(checkpoint));
-        RunCheckpoint current = checkpoint;
-        while (current.state().status() == RunStatus.RUNNING) {
-            current = advance(graph, current);
-        }
-        return current.state();
     }
 
     public RunState cancel(String runId) {
-        RunCheckpoint checkpoint = loadForAction(runId);
-        RunState current = checkpoint.state();
-        if (current.status() != RunStatus.RUNNING) {
-            return current;
+        try (RunLockManager.RunLease ignored = locks.acquire(runId)) {
+            RunCheckpoint checkpoint = loadForAction(runId);
+            RunState current = checkpoint.state();
+            if (current.status() != RunStatus.RUNNING) {
+                return current;
+            }
+            RunCheckpoint updated = cancelledCheckpoint(checkpoint);
+            append(updated, RunEventType.RUN_CANCELLED, "run cancelled before node execution");
+            checkpoints.save(updated);
+            return updated.state();
         }
-        RunState cancelled = new RunState(
-                RunStatus.CANCELLED,
-                current.currentNode(),
-                current.executedSteps(),
-                current.values(),
-                current.path(),
-                current.events());
-        RunCheckpoint updated = RunCheckpoint.current(
-                checkpoint.runId(),
-                checkpoint.graphSignature(),
-                CheckpointPhase.READY,
-                cancelled);
-        checkpoints.save(updated);
-        append(updated, RunEventType.RUN_CANCELLED, "run cancelled before node execution");
-        return cancelled;
     }
 
     public RunInspection inspect(String runId) {
         CheckpointLoadResult loaded = checkpoints.load(runId);
         EventLogReadResult events = eventLog.readAll(runId);
-        RunCheckpoint checkpoint = loaded.checkpoint();
+        RunCheckpoint checkpoint = reconcileCancellation(loaded.checkpoint(), events.events());
         return new RunInspection(
                 checkpoint.runId(),
                 checkpoint.graphSignature(),
@@ -155,12 +157,75 @@ public final class ManagedRunService {
 
     private RunCheckpoint loadForAction(String runId) {
         CheckpointLoadResult loaded = checkpoints.load(runId);
-        RunCheckpoint checkpoint = loaded.checkpoint();
-        if (loaded.recoveredFromBackup()) {
+        List<RunEvent> events = eventLog.readAll(runId).events();
+        RunCheckpoint checkpoint = reconcileCancellation(loaded.checkpoint(), events);
+        boolean cancellationRecovered = checkpoint != loaded.checkpoint();
+        if (loaded.recoveredFromBackup() || cancellationRecovered) {
             checkpoints.save(checkpoint);
-            append(checkpoint, RunEventType.CHECKPOINT_RECOVERED, "state restored from backup");
+            String detail = cancellationRecovered
+                    ? "cancelled state restored from durable event"
+                    : "state restored from backup";
+            append(checkpoint, RunEventType.CHECKPOINT_RECOVERED, detail);
         }
+        reconcileCompletedEvents(checkpoint);
         return checkpoint;
+    }
+
+    private RunCheckpoint reconcileCancellation(
+            RunCheckpoint checkpoint,
+            List<RunEvent> events) {
+        boolean cancellationRecorded = events.stream()
+                .anyMatch(event -> event.type() == RunEventType.RUN_CANCELLED);
+        if (!cancellationRecorded || checkpoint.state().status() == RunStatus.CANCELLED) {
+            return checkpoint;
+        }
+        return cancelledCheckpoint(checkpoint);
+    }
+
+    private RunCheckpoint cancelledCheckpoint(RunCheckpoint checkpoint) {
+        RunState current = checkpoint.state();
+        RunState cancelled = new RunState(
+                RunStatus.CANCELLED,
+                current.currentNode(),
+                current.executedSteps(),
+                current.values(),
+                current.path(),
+                current.events());
+        return RunCheckpoint.current(
+                checkpoint.runId(),
+                checkpoint.graphSignature(),
+                CheckpointPhase.READY,
+                cancelled);
+    }
+
+    private void reconcileCompletedEvents(RunCheckpoint checkpoint) {
+        List<RunEvent> durableEvents = eventLog.readAll(checkpoint.runId()).events();
+        for (TransitionEvent transition : checkpoint.state().events()) {
+            boolean recorded = durableEvents.stream().anyMatch(event ->
+                    event.type() == RunEventType.NODE_COMPLETED
+                            && event.executedSteps() == transition.step()
+                            && event.node().equals(transition.node()));
+            if (!recorded) {
+                RunStatus status = transition.step() == checkpoint.state().executedSteps()
+                        ? checkpoint.state().status()
+                        : RunStatus.RUNNING;
+                append(
+                        checkpoint.runId(),
+                        RunEventType.NODE_COMPLETED,
+                        transition.node(),
+                        status,
+                        transition.step(),
+                        "node completion recovered from checkpoint");
+            }
+        }
+        if (checkpoint.state().status() == RunStatus.COMPLETED) {
+            boolean completionRecorded = durableEvents.stream().anyMatch(event ->
+                    event.type() == RunEventType.RUN_COMPLETED
+                            && event.executedSteps() == checkpoint.state().executedSteps());
+            if (!completionRecorded) {
+                append(checkpoint, RunEventType.RUN_COMPLETED, "run completion recovered from checkpoint");
+            }
+        }
     }
 
     private void verifyGraph(RunCheckpoint checkpoint, GraphDefinition graph) {
@@ -181,16 +246,32 @@ public final class ManagedRunService {
             RunEventType type,
             NodeId node,
             String detail) {
-        List<RunEvent> events = eventLog.readAll(checkpoint.runId()).events();
-        long sequence = events.isEmpty() ? 1 : events.getLast().sequence() + 1;
         RunState state = checkpoint.state();
-        eventLog.append(RunEvent.current(
+        append(
                 checkpoint.runId(),
-                sequence,
                 type,
                 node,
                 state.status(),
                 state.executedSteps(),
+                detail);
+    }
+
+    private void append(
+            String runId,
+            RunEventType type,
+            NodeId node,
+            RunStatus status,
+            int executedSteps,
+            String detail) {
+        List<RunEvent> events = eventLog.readAll(runId).events();
+        long sequence = events.isEmpty() ? 1 : events.getLast().sequence() + 1;
+        eventLog.append(RunEvent.current(
+                runId,
+                sequence,
+                type,
+                node,
+                status,
+                executedSteps,
                 detail));
     }
 

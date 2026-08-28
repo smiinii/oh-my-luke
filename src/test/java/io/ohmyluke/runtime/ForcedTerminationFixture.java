@@ -18,6 +18,7 @@ import io.ohmyluke.state.EventLogStore;
 import io.ohmyluke.state.HandoffNote;
 import io.ohmyluke.state.HandoffStore;
 import io.ohmyluke.state.RunEventCodec;
+import io.ohmyluke.state.RunLockManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -48,7 +49,8 @@ public final class ForcedTerminationFixture {
                 new GraphRunner(new GraphValidator()),
                 new CheckpointStore(projectRoot, new CheckpointCodec()),
                 new EventLogStore(projectRoot, new RunEventCodec()),
-                new HandoffStore(projectRoot));
+                new HandoffStore(projectRoot),
+                new RunLockManager(projectRoot));
     }
 
     private static GraphDefinition graph(Path marker) {
@@ -74,6 +76,11 @@ public final class ForcedTerminationFixture {
     }
 
     private record CrashOnceNode(NodeId id, Path marker) implements Node {
+        @Override
+        public String fingerprint() {
+            return "forced-termination-node-v1";
+        }
+
         @Override
         public NodeResult execute(NodeContext context) throws Exception {
             if (Files.notExists(marker)) {

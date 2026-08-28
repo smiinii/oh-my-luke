@@ -1,7 +1,9 @@
 package io.ohmyluke.graph;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -213,6 +215,26 @@ class GraphRunnerTest {
         assertEquals(INSPECT, result.currentNode());
     }
 
+    @Test
+    void longResumeDoesNotCopyTheEntireHistoryAtEveryStep() {
+        Node loop = node("loop", context -> NodeResult.success());
+        GraphDefinition graph = new GraphDefinition(
+                loop.id(),
+                Set.of(loop),
+                List.of(
+                        new Edge(loop.id(), loop.id(), Condition.outcomeIs(Outcome.SUCCESS)),
+                        new Edge(loop.id(), END, Condition.outcomeIs(Outcome.FAILURE)),
+                        new Edge(loop.id(), END, Condition.outcomeIs(Outcome.SKIPPED)),
+                        new Edge(loop.id(), END, Condition.outcomeIs(Outcome.CANCELLED))),
+                Set.of(END),
+                10_000);
+
+        RunState result = assertTimeout(Duration.ofSeconds(5), () -> runner.run(graph));
+
+        assertEquals(RunStatus.STEP_LIMIT_REACHED, result.status());
+        assertEquals(10_000, result.executedSteps());
+    }
+
     private static GraphDefinition retryUntilSecondAttemptGraph(int maxSteps) {
         Node writer = node("write", context -> {
             int attempt = Integer.parseInt(context.values().getOrDefault("attempt", "0")) + 1;
@@ -240,6 +262,11 @@ class GraphRunnerTest {
     }
 
     private record TestNode(NodeId id, Function<NodeContext, NodeResult> action) implements Node {
+        @Override
+        public String fingerprint() {
+            return "graph-runner-test-node-v1";
+        }
+
         @Override
         public NodeResult execute(NodeContext context) {
             return action.apply(context);

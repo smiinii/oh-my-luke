@@ -19,6 +19,7 @@ import io.ohmyluke.graph.RunState;
 import io.ohmyluke.graph.RunStatus;
 import io.ohmyluke.graph.StatePatch;
 import io.ohmyluke.state.CheckpointCodec;
+import io.ohmyluke.state.CheckpointException;
 import io.ohmyluke.state.CheckpointPhase;
 import io.ohmyluke.state.CheckpointStore;
 import io.ohmyluke.state.EventLogStore;
@@ -26,12 +27,18 @@ import io.ohmyluke.state.HandoffNote;
 import io.ohmyluke.state.HandoffStore;
 import io.ohmyluke.state.RunEventCodec;
 import io.ohmyluke.state.RunEventType;
+import io.ohmyluke.state.RunLockManager;
+import io.ohmyluke.state.RunCheckpoint;
+import io.ohmyluke.state.GraphSignature;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
@@ -165,12 +172,99 @@ class ManagedRunServiceTest {
         assertEquals(RunEventType.RUN_CANCELLED, service.inspect("run-001").events().getLast().type());
     }
 
+    @Test
+    void cancelledRunStaysCancelledWhenThePrimaryCheckpointIsCorrupt() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        GraphDefinition graph = oneNodeGraph(context -> {
+            executions.incrementAndGet();
+            return NodeResult.success();
+        }, 0);
+        CheckpointStore checkpoints = new CheckpointStore(projectRoot, new CheckpointCodec());
+        ManagedRunService service = service(checkpoints, new EventLogStore(projectRoot, new RunEventCodec()));
+        service.start("run-001", graph, handoff());
+        service.cancel("run-001");
+        Files.writeString(checkpoints.statePath("run-001"), "{broken-json");
+
+        RunState resumed = service.resume("run-001", graph);
+
+        assertEquals(RunStatus.CANCELLED, resumed.status());
+        assertEquals(0, executions.get());
+        assertEquals(RunStatus.CANCELLED, checkpoints.load("run-001").checkpoint().state().status());
+    }
+
+    @Test
+    void onlyOneServiceCanResumeTheSameRunAtATime() throws Exception {
+        CountDownLatch enteredNode = new CountDownLatch(1);
+        CountDownLatch releaseNode = new CountDownLatch(1);
+        AtomicInteger executions = new AtomicInteger();
+        GraphDefinition graph = oneNodeGraph(context -> {
+            executions.incrementAndGet();
+            enteredNode.countDown();
+            try {
+                if (!releaseNode.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("test did not release node");
+                }
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(error);
+            }
+            return NodeResult.success();
+        }, 0);
+        ManagedRunService first = service();
+        ManagedRunService second = service();
+        first.start("run-001", graph, handoff());
+        CompletableFuture<RunState> active = CompletableFuture.supplyAsync(
+                () -> first.resume("run-001", graph));
+        assertTrue(enteredNode.await(5, TimeUnit.SECONDS));
+
+        try {
+            assertThrows(CheckpointException.class, () -> second.resume("run-001", graph));
+        } finally {
+            releaseNode.countDown();
+        }
+
+        assertEquals(RunStatus.COMPLETED, active.get(5, TimeUnit.SECONDS).status());
+        assertEquals(1, executions.get());
+    }
+
+    @Test
+    void resumeReconstructsCompletionEventsWhenCheckpointWasSavedFirst() {
+        GraphDefinition graph = oneNodeGraph(context -> NodeResult.success(), 0);
+        GraphRunner runner = new GraphRunner(new GraphValidator());
+        CheckpointStore checkpoints = new CheckpointStore(projectRoot, new CheckpointCodec());
+        EventLogStore events = new EventLogStore(projectRoot, new RunEventCodec());
+        ManagedRunService service = service(checkpoints, events);
+        service.start("run-001", graph, handoff());
+        RunState completed = runner.step(graph, checkpoints.load("run-001").checkpoint().state());
+        checkpoints.save(RunCheckpoint.current(
+                "run-001",
+                GraphSignature.calculate(graph),
+                CheckpointPhase.READY,
+                completed));
+
+        RunState resumed = service.resume("run-001", graph);
+        List<RunEventType> eventTypes = events.readAll("run-001").events().stream()
+                .map(event -> event.type())
+                .toList();
+
+        assertEquals(RunStatus.COMPLETED, resumed.status());
+        assertTrue(eventTypes.contains(RunEventType.NODE_COMPLETED));
+        assertTrue(eventTypes.contains(RunEventType.RUN_COMPLETED));
+    }
+
     private ManagedRunService service() {
+        return service(
+                new CheckpointStore(projectRoot, new CheckpointCodec()),
+                new EventLogStore(projectRoot, new RunEventCodec()));
+    }
+
+    private ManagedRunService service(CheckpointStore checkpoints, EventLogStore events) {
         return new ManagedRunService(
                 new GraphRunner(new GraphValidator()),
-                new CheckpointStore(projectRoot, new CheckpointCodec()),
-                new EventLogStore(projectRoot, new RunEventCodec()),
-                new HandoffStore(projectRoot));
+                checkpoints,
+                events,
+                new HandoffStore(projectRoot),
+                new RunLockManager(projectRoot));
     }
 
     private Process fixtureProcess(String mode) throws Exception {
@@ -209,6 +303,11 @@ class ManagedRunServiceTest {
     }
 
     private record TestNode(NodeId id, Function<NodeContext, NodeResult> action) implements Node {
+        @Override
+        public String fingerprint() {
+            return "managed-run-test-node-v1";
+        }
+
         @Override
         public NodeResult execute(NodeContext context) {
             return action.apply(context);

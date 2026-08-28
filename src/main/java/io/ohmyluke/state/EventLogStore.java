@@ -1,10 +1,13 @@
 package io.ohmyluke.state;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -37,27 +40,31 @@ public final class EventLogStore {
             return new EventLogReadResult(List.of(), false);
         }
         try {
-            String content = Files.readString(path, StandardCharsets.UTF_8);
-            boolean terminatedByNewline = content.endsWith("\n");
-            String[] lines = content.split("\n", -1);
+            byte[] content = Files.readAllBytes(path);
+            boolean terminatedByNewline = content.length > 0
+                    && content[content.length - 1] == '\n';
             List<RunEvent> events = new ArrayList<>();
             boolean ignoredTail = false;
-            for (int index = 0; index < lines.length; index++) {
-                String line = lines[index];
-                if (line.isBlank()) {
+            int lineStart = 0;
+            for (int index = 0; index <= content.length; index++) {
+                if (index < content.length && content[index] != '\n') {
                     continue;
                 }
+                boolean incompleteFinalLine = index == content.length && !terminatedByNewline;
                 try {
-                    events.add(codec.decode(line));
+                    String line = decodeUtf8(content, lineStart, index);
+                    if (!line.isBlank()) {
+                        events.add(codec.decode(line));
+                    }
                 } catch (UnsupportedCheckpointVersionException error) {
                     throw error;
                 } catch (CheckpointException error) {
-                    boolean incompleteFinalLine = index == lines.length - 1 && !terminatedByNewline;
                     if (!incompleteFinalLine) {
                         throw error;
                     }
                     ignoredTail = true;
                 }
+                lineStart = index + 1;
             }
             return new EventLogReadResult(events, ignoredTail);
         } catch (IOException error) {
@@ -73,20 +80,38 @@ public final class EventLogStore {
         if (Files.notExists(path)) {
             return "";
         }
-        String content = Files.readString(path, StandardCharsets.UTF_8);
-        if (content.isEmpty() || content.endsWith("\n")) {
+        byte[] content = Files.readAllBytes(path);
+        if (content.length == 0 || content[content.length - 1] == '\n') {
             return "";
         }
-        int lastNewline = content.lastIndexOf('\n');
-        String tail = content.substring(lastNewline + 1);
+        int lastNewline = lastIndexOfNewline(content);
         try {
-            codec.decode(tail);
+            codec.decode(decodeUtf8(content, lastNewline + 1, content.length));
             return "\n";
         } catch (UnsupportedCheckpointVersionException error) {
             throw error;
         } catch (CheckpointException error) {
-            RunFileSupport.writeDurably(path, content.substring(0, lastNewline + 1));
+            RunFileSupport.writeDurably(path, Arrays.copyOf(content, lastNewline + 1));
             return "";
         }
+    }
+
+    private static String decodeUtf8(byte[] bytes, int start, int end) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .decode(ByteBuffer.wrap(bytes, start, end - start))
+                    .toString();
+        } catch (CharacterCodingException error) {
+            throw new CheckpointException("run event contains malformed UTF-8", error);
+        }
+    }
+
+    private static int lastIndexOfNewline(byte[] content) {
+        for (int index = content.length - 1; index >= 0; index--) {
+            if (content[index] == '\n') {
+                return index;
+            }
+        }
+        return -1;
     }
 }

@@ -69,4 +69,23 @@ class CheckpointCodecTest {
 
         assertThrows(UnsupportedCheckpointVersionException.class, () -> codec.decode(json));
     }
+
+    @Test
+    void refusesToWriteAnUnsupportedSchemaVersion() {
+        NodeId node = new NodeId("write");
+        RunCheckpoint unsupported = new RunCheckpoint(
+                999,
+                "run-001",
+                "graph-signature",
+                CheckpointPhase.READY,
+                new RunState(
+                        RunStatus.RUNNING,
+                        node,
+                        0,
+                        Map.of(),
+                        List.of(node),
+                        List.of()));
+
+        assertThrows(UnsupportedCheckpointVersionException.class, () -> codec.encode(unsupported));
+    }
 }

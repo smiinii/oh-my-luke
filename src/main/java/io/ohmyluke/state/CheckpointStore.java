@@ -24,13 +24,15 @@ public final class CheckpointStore {
         Objects.requireNonNull(checkpoint, "checkpoint");
         Path state = statePath(checkpoint.runId());
         Path runDirectory = state.getParent();
-        Path temporary = runDirectory.resolve(STATE_FILE + ".tmp");
-        Path backup = runDirectory.resolve(BACKUP_FILE);
-        Path backupTemporary = runDirectory.resolve(BACKUP_FILE + ".tmp");
+        Path temporary = null;
+        Path backup = backupPath(checkpoint.runId());
+        Path backupTemporary = null;
         try {
             Files.createDirectories(runDirectory);
+            temporary = Files.createTempFile(runDirectory, STATE_FILE + ".", ".tmp");
             RunFileSupport.writeDurably(temporary, codec.encode(checkpoint));
             if (Files.exists(state) && isReadyCheckpoint(state)) {
+                backupTemporary = Files.createTempFile(runDirectory, BACKUP_FILE + ".", ".tmp");
                 Files.copy(state, backupTemporary, StandardCopyOption.REPLACE_EXISTING);
                 RunFileSupport.forceFile(backupTemporary);
                 RunFileSupport.moveAtomically(backupTemporary, backup);
@@ -47,13 +49,13 @@ public final class CheckpointStore {
     public CheckpointLoadResult load(String runId) {
         Path state = statePath(runId);
         try {
-            return new CheckpointLoadResult(read(state), false);
+            return new CheckpointLoadResult(readForRun(state, runId), false);
         } catch (UnsupportedCheckpointVersionException error) {
             throw error;
         } catch (CheckpointException primaryError) {
-            Path backup = state.getParent().resolve(BACKUP_FILE);
+            Path backup = backupPath(runId);
             try {
-                return new CheckpointLoadResult(read(backup), true);
+                return new CheckpointLoadResult(readForRun(backup, runId), true);
             } catch (CheckpointException backupError) {
                 primaryError.addSuppressed(backupError);
                 throw primaryError;
@@ -69,6 +71,10 @@ public final class CheckpointStore {
         return Files.exists(statePath(runId));
     }
 
+    private Path backupPath(String runId) {
+        return RunFileSupport.file(projectRoot, runId, BACKUP_FILE);
+    }
+
     private RunCheckpoint read(Path path) {
         try {
             return codec.decode(Files.readString(path, StandardCharsets.UTF_8));
@@ -77,6 +83,18 @@ public final class CheckpointStore {
         } catch (IOException error) {
             throw new CheckpointException("failed to read checkpoint: " + path, error);
         }
+    }
+
+    private RunCheckpoint readForRun(Path path, String expectedRunId) {
+        RunCheckpoint checkpoint = read(path);
+        if (!checkpoint.runId().equals(expectedRunId)) {
+            throw new CheckpointException(
+                    "checkpoint runId does not match directory: expected "
+                            + expectedRunId
+                            + " but was "
+                            + checkpoint.runId());
+        }
+        return checkpoint;
     }
 
     private boolean isReadyCheckpoint(Path path) {

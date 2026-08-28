@@ -22,10 +22,11 @@ public final class GraphSignature {
         append(canonical, "start", graph.start().value());
         append(canonical, "maxSteps", Integer.toString(graph.maxSteps()));
         graph.nodes().stream()
-                .map(Node::id)
-                .map(NodeId::value)
-                .sorted()
-                .forEach(value -> append(canonical, "node", value));
+                .sorted(Comparator.comparing(node -> node.id().value()))
+                .forEach(node -> {
+                    append(canonical, "node.id", node.id().value());
+                    append(canonical, "node.fingerprint", node.fingerprint());
+                });
         graph.terminalNodes().stream()
                 .map(NodeId::value)
                 .sorted()
