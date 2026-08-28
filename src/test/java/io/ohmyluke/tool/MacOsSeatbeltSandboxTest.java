@@ -2,6 +2,7 @@ package io.ohmyluke.tool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ohmyluke.policy.PermissionGrantLedger;
 import io.ohmyluke.policy.ToolCapability;
@@ -27,6 +28,27 @@ import org.junit.jupiter.api.io.TempDir;
 class MacOsSeatbeltSandboxTest {
     @TempDir
     Path temporaryDirectory;
+
+    @Test
+    void profileUsesNarrowRuntimeRootsInsteadOfWholeApplicationAndPackageTrees() throws IOException {
+        Path parent = Files.createDirectory(temporaryDirectory.resolve("sandbox"));
+        Path workspace = Files.createDirectory(parent.resolve("project"));
+        Path home = Files.createDirectory(parent.resolve("home"));
+        ProcessSandboxSpec specification = new ProcessSandboxSpec(
+                Path.of("/usr/bin/true"), List.of(), workspace, workspace, home, false);
+
+        try (SandboxLaunch launch = new MacOsSeatbeltSandbox().prepare(specification)) {
+            int profileFlag = launch.command().indexOf("-f");
+            String profile = Files.readString(Path.of(launch.command().get(profileFlag + 1)));
+
+            assertFalse(profile.contains("(subpath \"/opt\")"));
+            assertFalse(profile.contains("(subpath \"/Applications\")"));
+            assertFalse(profile.contains("(subpath \"/Library\")"));
+            assertFalse(profile.contains("(subpath \"/private/var\")"));
+            assertTrue(profile.contains("/opt/homebrew/Cellar") || !Files.exists(Path.of("/opt/homebrew/Cellar")));
+            assertTrue(profile.contains("/private/var/db") || !Files.exists(Path.of("/private/var/db")));
+        }
+    }
 
     @Test
     void permitsWorkspaceWritesWithoutChangingTheRealProject() throws IOException {

@@ -89,21 +89,29 @@ public final class MacOsSeatbeltSandbox implements ProcessSandbox {
                 "/usr",
                 "/bin",
                 "/sbin",
-                "/Library",
+                "/Library/Developer",
+                "/Library/Java/JavaVirtualMachines",
                 "/private/etc",
-                "/private/var",
+                "/private/var/db",
+                "/private/var/run",
+                "/private/var/select",
                 "/private/preboot",
                 "/dev",
-                "/Applications",
-                "/opt",
-                "/cores")) {
+                "/Applications/Xcode.app/Contents/Developer",
+                "/opt/homebrew/Cellar")) {
             if (Files.exists(Path.of(runtimeRoot))) {
                 profile.append("(allow file-read* (subpath \"")
                         .append(escape(runtimeRoot))
                         .append("\"))\n");
             }
         }
-        for (String deniedRuntimeData : List.of("/private/var/folders", "/private/var/tmp")) {
+        for (String deniedRuntimeData : List.of(
+                "/private/var/folders",
+                "/private/var/tmp",
+                "/opt/homebrew/etc",
+                "/opt/homebrew/var",
+                "/usr/local/etc",
+                "/usr/local/var")) {
             if (Files.exists(Path.of(deniedRuntimeData))) {
                 profile.append("(deny file-read* (subpath \"")
                         .append(escape(deniedRuntimeData))
