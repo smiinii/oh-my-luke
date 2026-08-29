@@ -95,13 +95,20 @@ class AiNodeTest {
                 AiRuntimeResult.success("must not be used", 99));
         GraphDefinition graph = graph(runtime);
 
-        RunState result = new GraphRunner(new GraphValidator()).run(
+        GraphRunner runner = new GraphRunner(new GraphValidator());
+        RunState result = runner.run(
                 graph,
                 Map.of("goal", "ship"));
+        RunState explicitlyNamedLocal = runner.run(
+                graph,
+                Map.of("goal", "ship"),
+                "local");
 
         assertEquals(Outcome.FAILURE, result.events().getFirst().outcome());
         assertEquals("missing-run-scope", result.events().getFirst().failure().code());
         assertEquals(0, result.events().getFirst().metrics().usage());
+        assertEquals(Outcome.SUCCESS, explicitlyNamedLocal.events().getFirst().outcome());
+        assertEquals("must not be used", explicitlyNamedLocal.values().get("ai.plan.output"));
     }
 
     @Test

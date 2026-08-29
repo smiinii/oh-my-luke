@@ -19,7 +19,7 @@ public final class GraphRunner {
     }
 
     public RunState run(GraphDefinition graph, Map<String, String> initialValues) {
-        return run(graph, initialValues, NodeContext.LOCAL_RUN_ID);
+        return resume(graph, start(graph, initialValues));
     }
 
     public RunState run(
@@ -52,13 +52,17 @@ public final class GraphRunner {
     }
 
     public RunState resume(GraphDefinition graph, RunState state) {
-        return resume(graph, state, NodeContext.LOCAL_RUN_ID);
+        return resumeInternal(graph, state, null);
     }
 
     public RunState resume(GraphDefinition graph, RunState state, String runId) {
+        requireRunId(runId);
+        return resumeInternal(graph, state, runId);
+    }
+
+    private RunState resumeInternal(GraphDefinition graph, RunState state, String runId) {
         Objects.requireNonNull(graph, "graph");
         Objects.requireNonNull(state, "state");
-        requireRunId(runId);
         if (state.status() != RunStatus.RUNNING) {
             return state;
         }
@@ -80,7 +84,7 @@ public final class GraphRunner {
             if (node == null) {
                 throw new GraphExecutionException("no executable node found for " + current);
             }
-            NodeResult result = execute(node, new NodeContext(values, executedSteps, runId));
+            NodeResult result = execute(node, context(values, executedSteps, runId));
             values.putAll(result.statePatch().updates());
             Map<String, String> stateAfter = immutableState(values);
             Edge selected = selectSingleEdge(
@@ -108,12 +112,14 @@ public final class GraphRunner {
     }
 
     public RunState step(GraphDefinition graph, RunState state) {
-        return step(graph, state, NodeContext.LOCAL_RUN_ID);
+        Objects.requireNonNull(graph, "graph");
+        return stepInternal(prepare(graph), state, null);
     }
 
     public RunState step(GraphDefinition graph, RunState state, String runId) {
         Objects.requireNonNull(graph, "graph");
-        return step(prepare(graph), state, runId);
+        requireRunId(runId);
+        return stepInternal(prepare(graph), state, runId);
     }
 
     public PreparedGraph prepare(GraphDefinition graph) {
@@ -123,13 +129,17 @@ public final class GraphRunner {
     }
 
     public RunState step(PreparedGraph prepared, RunState state) {
-        return step(prepared, state, NodeContext.LOCAL_RUN_ID);
+        return stepInternal(prepared, state, null);
     }
 
     public RunState step(PreparedGraph prepared, RunState state, String runId) {
+        requireRunId(runId);
+        return stepInternal(prepared, state, runId);
+    }
+
+    private RunState stepInternal(PreparedGraph prepared, RunState state, String runId) {
         Objects.requireNonNull(prepared, "prepared");
         Objects.requireNonNull(state, "state");
-        requireRunId(runId);
         if (state.status() != RunStatus.RUNNING) {
             return state;
         }
@@ -151,7 +161,7 @@ public final class GraphRunner {
             throw new GraphExecutionException("no executable node found for " + current);
         }
 
-        NodeResult result = execute(node, new NodeContext(state.values(), state.executedSteps(), runId));
+        NodeResult result = execute(node, context(state.values(), state.executedSteps(), runId));
         Map<String, String> stateAfter = apply(state.values(), result.statePatch());
         Edge selected = selectSingleEdge(
                 current,
@@ -239,6 +249,15 @@ public final class GraphRunner {
         if (runId == null || runId.isBlank()) {
             throw new IllegalArgumentException("runId must not be blank");
         }
+    }
+
+    private static NodeContext context(
+            Map<String, String> values,
+            int executedSteps,
+            String runId) {
+        return runId == null
+                ? new NodeContext(values, executedSteps)
+                : new NodeContext(values, executedSteps, runId);
     }
 
     private static RunState snapshot(

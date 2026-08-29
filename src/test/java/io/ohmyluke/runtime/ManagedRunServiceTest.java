@@ -156,7 +156,7 @@ class ManagedRunServiceTest {
         ManagedRunService service = service(configuration);
         FakeAiRuntime runtime = new FakeAiRuntime(List.of(new FakeAiExchange(
                 new AiRequest(
-                        AiInvocationId.forNode("fake-ai-usage", WORK, 0),
+                        AiInvocationId.forNode("local", WORK, 0),
                         "Answer the request",
                         Map.of("request", "same")),
                 AiRuntimeResult.success("done", 7))));
@@ -172,10 +172,10 @@ class ManagedRunServiceTest {
                 List.of(new Edge(WORK, END, Condition.always())),
                 Set.of(END),
                 0);
-        service.start("fake-ai-usage", graph, Map.of("request", "same"), handoff());
+        service.start("local", graph, Map.of("request", "same"), handoff());
 
-        RunState result = service.resume("fake-ai-usage", graph);
-        RunInspection inspection = service.inspect("fake-ai-usage");
+        RunState result = service.resume("local", graph);
+        RunInspection inspection = service.inspect("local");
 
         assertEquals(RunStatus.COMPLETED, result.status());
         assertEquals("done", result.values().get("answer"));

@@ -54,7 +54,7 @@ public final class AiNode implements Node {
     @Override
     public NodeResult execute(NodeContext context) {
         Objects.requireNonNull(context, "context");
-        if (context.runId().equals(NodeContext.LOCAL_RUN_ID)) {
+        if (!context.explicitRunScope()) {
             return NodeResult.failure(new FailureInfo(
                     "ai-input",
                     "missing-run-scope",
