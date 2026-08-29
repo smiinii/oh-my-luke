@@ -71,10 +71,12 @@ final class CodexProcessRunner {
         ExecutorService tasks = Executors.newVirtualThreadPerTaskExecutor();
         Set<ProcessHandle> descendants = ConcurrentHashMap.newKeySet();
         try {
-            Future<CapturedOutput> stdout = tasks.submit(
-                    () -> capture(process.getInputStream(), outputLimit));
-            Future<CapturedOutput> stderr = tasks.submit(
-                    () -> capture(process.getErrorStream(), outputLimit));
+            OutputCapture standardOutputCapture = new OutputCapture(outputLimit);
+            OutputCapture standardErrorCapture = new OutputCapture(outputLimit);
+            Future<?> stdout = tasks.submit(
+                    () -> capture(process.getInputStream(), standardOutputCapture));
+            Future<?> stderr = tasks.submit(
+                    () -> capture(process.getErrorStream(), standardErrorCapture));
             CountDownLatch observerReady = new CountDownLatch(1);
             Future<?> descendantObserver = tasks.submit(
                     () -> observeDescendants(process, descendants, observerReady));
@@ -86,10 +88,11 @@ final class CodexProcessRunner {
             }
             awaitDescendantObserver(descendantObserver);
             terminateDescendants(process, descendants);
+            closeQuietly(process.getOutputStream());
             boolean writeSucceeded = awaitWrite(inputWritten);
             closeProcessStreams(process);
-            CapturedOutput standardOutput = awaitOutput(stdout);
-            CapturedOutput standardError = awaitOutput(stderr);
+            CapturedOutput standardOutput = awaitOutput(stdout, standardOutputCapture);
+            CapturedOutput standardError = awaitOutput(stderr, standardErrorCapture);
             int exitCode = completed ? process.exitValue() : -1;
             return new CodexProcessResult(
                     true,
@@ -174,28 +177,16 @@ final class CodexProcessRunner {
         }
     }
 
-    private static CapturedOutput capture(InputStream input, int limit) {
-        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(limit, 8192));
+    private static void capture(InputStream input, OutputCapture output) {
         byte[] buffer = new byte[8192];
-        int total = 0;
-        boolean truncated = false;
         int read;
         try {
             while ((read = input.read(buffer)) >= 0) {
-                int remaining = limit - total;
-                if (remaining > 0) {
-                    int copied = Math.min(remaining, read);
-                    output.write(buffer, 0, copied);
-                    total += copied;
-                }
-                if (read > remaining) {
-                    truncated = true;
-                }
+                output.append(buffer, read);
             }
         } catch (IOException ignored) {
             // Closing the parent-side stream after process exit bounds orphaned pipe readers.
         }
-        return new CapturedOutput(output.toString(StandardCharsets.UTF_8), truncated);
     }
 
     private static void closeProcessStreams(Process process) {
@@ -212,21 +203,20 @@ final class CodexProcessRunner {
         }
     }
 
-    private static CapturedOutput awaitOutput(Future<CapturedOutput> future) {
+    private static CapturedOutput awaitOutput(Future<?> future, OutputCapture capture) {
         try {
-            return future.get(5, TimeUnit.SECONDS);
+            future.get(250, TimeUnit.MILLISECONDS);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
-            return new CapturedOutput("", true);
         } catch (ExecutionException | TimeoutException error) {
             future.cancel(true);
-            return new CapturedOutput("", true);
         }
+        return capture.snapshot();
     }
 
     private static boolean awaitWrite(Future<Boolean> future) {
         try {
-            return future.get(5, TimeUnit.SECONDS);
+            return future.get(1, TimeUnit.SECONDS);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             return false;
@@ -348,4 +338,32 @@ final class CodexProcessRunner {
     }
 
     private record CapturedOutput(String text, boolean truncated) {}
+
+    private static final class OutputCapture {
+        private final int limit;
+        private final ByteArrayOutputStream output;
+        private int total;
+        private boolean truncated;
+
+        private OutputCapture(int limit) {
+            this.limit = limit;
+            this.output = new ByteArrayOutputStream(Math.min(limit, 8192));
+        }
+
+        private synchronized void append(byte[] buffer, int length) {
+            int remaining = limit - total;
+            if (remaining > 0) {
+                int copied = Math.min(remaining, length);
+                output.write(buffer, 0, copied);
+                total += copied;
+            }
+            if (length > remaining) {
+                truncated = true;
+            }
+        }
+
+        private synchronized CapturedOutput snapshot() {
+            return new CapturedOutput(output.toString(StandardCharsets.UTF_8), truncated);
+        }
+    }
 }
