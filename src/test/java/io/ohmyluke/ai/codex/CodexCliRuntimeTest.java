@@ -2,6 +2,8 @@ package io.ohmyluke.ai.codex;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -11,8 +13,11 @@ import io.ohmyluke.ai.AiRuntimeResult;
 import io.ohmyluke.ai.AiRuntimeStatus;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.Map;
@@ -212,6 +217,7 @@ class CodexCliRuntimeTest {
     void returnsPromptlyWhenACompletedParentLeavesAnOutputPipeOpen() throws Exception {
         Path childPid = project.resolve("fast-child.pid");
         Path executable = executable("""
+                cat >/dev/null
                 sleep 30 &
                 child=$!
                 printf '%%s' "$child" > %s
@@ -340,11 +346,8 @@ class CodexCliRuntimeTest {
     }
 
     @Test
-    void operatingSystemLockBlocksASecondJvmWhileTheFirstJvmHoldsIt() throws Exception {
-        Path firstStarted = project.resolve("first-started");
+    void operatingSystemLockRejectsAnotherJvmWhileTheChildJvmHoldsIt() throws Exception {
         Path firstEntered = project.resolve("first-entered");
-        Path secondStarted = project.resolve("second-started");
-        Path secondEntered = project.resolve("second-entered");
         Path release = project.resolve("release");
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         String classpath = System.getProperty("java.class.path");
@@ -354,40 +357,34 @@ class CodexCliRuntimeTest {
                         classpath,
                         CodexInvocationStoreProcessFixture.class.getName(),
                         project.toString(),
-                        "hold",
-                        firstStarted.toString(),
                         firstEntered.toString(),
                         release.toString())
                 .start();
-        Process second = null;
         try {
             awaitFile(firstEntered, first);
-            second = new ProcessBuilder(
-                            java,
-                            "-cp",
-                            classpath,
-                            CodexInvocationStoreProcessFixture.class.getName(),
-                            project.toString(),
-                            "wait",
-                            secondStarted.toString(),
-                            secondEntered.toString(),
-                            release.toString())
-                    .start();
-            awaitFile(secondStarted, second);
-            Thread.sleep(150);
-            assertFalse(Files.exists(secondEntered), "second JVM entered while the OS lock was held");
+            Path lockPath = project.toRealPath()
+                    .resolve(".oml/runtime/codex/invocations")
+                    .resolve(CodexHashing.safeFileId("cross-jvm-lock") + ".lock");
+            try (FileChannel channel = FileChannel.open(lockPath, StandardOpenOption.WRITE)) {
+                FileLock competing = channel.tryLock();
+                try {
+                    assertNull(competing, "another JVM acquired an already-held OS lock");
+                } finally {
+                    if (competing != null) {
+                        competing.release();
+                    }
+                }
+            }
             Files.writeString(release, "release");
 
             assertTrue(first.waitFor(10, TimeUnit.SECONDS));
-            assertTrue(second.waitFor(10, TimeUnit.SECONDS));
             assertEquals(0, first.exitValue(), new String(first.getErrorStream().readAllBytes()));
-            assertEquals(0, second.exitValue(), new String(second.getErrorStream().readAllBytes()));
-            assertTrue(Files.exists(secondEntered));
+            try (FileChannel channel = FileChannel.open(lockPath, StandardOpenOption.WRITE);
+                    FileLock acquired = channel.tryLock()) {
+                assertNotNull(acquired, "OS lock remained held after the child JVM exited");
+            }
         } finally {
             first.destroyForcibly();
-            if (second != null) {
-                second.destroyForcibly();
-            }
         }
     }
 

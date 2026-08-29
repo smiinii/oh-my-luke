@@ -9,25 +9,17 @@ public final class CodexInvocationStoreProcessFixture {
     private CodexInvocationStoreProcessFixture() {}
 
     public static void main(String[] arguments) throws Exception {
-        if (arguments.length != 5) {
-            throw new IllegalArgumentException(
-                    "expected project, mode, started, entered and release paths");
+        if (arguments.length != 3) {
+            throw new IllegalArgumentException("expected project, entered and release paths");
         }
         Path project = Path.of(arguments[0]).toRealPath();
-        String mode = arguments[1];
-        Path started = Path.of(arguments[2]);
-        Path entered = Path.of(arguments[3]);
-        Path release = Path.of(arguments[4]);
+        Path entered = Path.of(arguments[1]);
+        Path release = Path.of(arguments[2]);
         CodexInvocationStore store = new CodexInvocationStore(project, 1024);
 
-        Files.writeString(started, "started");
         try (var ignored = store.lock("cross-jvm-lock")) {
             Files.writeString(entered, "entered");
-            if (mode.equals("hold")) {
-                awaitRelease(release);
-            } else if (!mode.equals("wait")) {
-                throw new IllegalArgumentException("unknown mode");
-            }
+            awaitRelease(release);
         }
     }
 
