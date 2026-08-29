@@ -218,7 +218,7 @@ public final class ManagedRunService {
         checkpoints.save(started);
         append(started, RunEventType.NODE_STARTED, "node execution started");
 
-        RunState updatedState = runner.step(prepared, checkpoint.state());
+        RunState updatedState = runner.step(prepared, checkpoint.state(), checkpoint.runId());
         TransitionEvent transition = updatedState.events().getLast();
         FailureFingerprint failure = transition.failure() == null
                 ? null
