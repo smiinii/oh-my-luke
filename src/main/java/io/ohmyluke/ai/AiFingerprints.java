@@ -59,6 +59,13 @@ final class AiFingerprints {
         append(target, result.status().name());
         append(target, result.output());
         append(target, Long.toString(result.usage()));
+        append(target, Boolean.toString(result.tokenUsage().available()));
+        append(target, Long.toString(result.tokenUsage().inputTokens()));
+        append(target, Long.toString(result.tokenUsage().cachedInputTokens()));
+        append(target, Long.toString(result.tokenUsage().outputTokens()));
+        append(target, Long.toString(result.tokenUsage().reasoningOutputTokens()));
+        append(target, result.tokenUsage().source());
+        append(target, result.runtimeSessionId());
         if (result.failure() == null) {
             append(target, "none");
         } else {
