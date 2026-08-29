@@ -68,17 +68,17 @@ final class CodexProcessRunner {
             return new CodexProcessResult(false, false, -1, "", "", false, false);
         }
 
-        try (ExecutorService tasks = Executors.newVirtualThreadPerTaskExecutor()) {
+        ExecutorService tasks = Executors.newVirtualThreadPerTaskExecutor();
+        Set<ProcessHandle> descendants = ConcurrentHashMap.newKeySet();
+        try {
             Future<CapturedOutput> stdout = tasks.submit(
                     () -> capture(process.getInputStream(), outputLimit));
             Future<CapturedOutput> stderr = tasks.submit(
                     () -> capture(process.getErrorStream(), outputLimit));
-            Set<ProcessHandle> descendants = ConcurrentHashMap.newKeySet();
             CountDownLatch observerReady = new CountDownLatch(1);
             Future<?> descendantObserver = tasks.submit(
                     () -> observeDescendants(process, descendants, observerReady));
             awaitObserverReady(observerReady);
-            observeBeforeInput(process, descendants);
             Future<Boolean> inputWritten = tasks.submit(() -> writeInput(process, input));
             boolean completed = waitFor(process, timeout, descendants);
             if (!completed) {
@@ -87,6 +87,7 @@ final class CodexProcessRunner {
             awaitDescendantObserver(descendantObserver);
             terminateDescendants(process, descendants);
             boolean writeSucceeded = awaitWrite(inputWritten);
+            closeProcessStreams(process);
             CapturedOutput standardOutput = awaitOutput(stdout);
             CapturedOutput standardError = awaitOutput(stderr);
             int exitCode = completed ? process.exitValue() : -1;
@@ -98,16 +99,12 @@ final class CodexProcessRunner {
                     standardError.text(),
                     standardOutput.truncated() || standardError.truncated(),
                     !writeSucceeded);
-        }
-    }
-
-    private static void observeBeforeInput(
-            Process process,
-            Set<ProcessHandle> descendants) {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
-        while (process.isAlive() && System.nanoTime() < deadline) {
-            process.descendants().forEach(descendants::add);
-            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+        } finally {
+            if (process.isAlive()) {
+                terminateTree(process, descendants);
+            }
+            closeProcessStreams(process);
+            tasks.shutdownNow();
         }
     }
 
@@ -177,24 +174,42 @@ final class CodexProcessRunner {
         }
     }
 
-    private static CapturedOutput capture(InputStream input, int limit) throws IOException {
+    private static CapturedOutput capture(InputStream input, int limit) {
         ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(limit, 8192));
         byte[] buffer = new byte[8192];
         int total = 0;
         boolean truncated = false;
         int read;
-        while ((read = input.read(buffer)) >= 0) {
-            int remaining = limit - total;
-            if (remaining > 0) {
-                int copied = Math.min(remaining, read);
-                output.write(buffer, 0, copied);
-                total += copied;
+        try {
+            while ((read = input.read(buffer)) >= 0) {
+                int remaining = limit - total;
+                if (remaining > 0) {
+                    int copied = Math.min(remaining, read);
+                    output.write(buffer, 0, copied);
+                    total += copied;
+                }
+                if (read > remaining) {
+                    truncated = true;
+                }
             }
-            if (read > remaining) {
-                truncated = true;
-            }
+        } catch (IOException ignored) {
+            // Closing the parent-side stream after process exit bounds orphaned pipe readers.
         }
         return new CapturedOutput(output.toString(StandardCharsets.UTF_8), truncated);
+    }
+
+    private static void closeProcessStreams(Process process) {
+        closeQuietly(process.getOutputStream());
+        closeQuietly(process.getInputStream());
+        closeQuietly(process.getErrorStream());
+    }
+
+    private static void closeQuietly(AutoCloseable stream) {
+        try {
+            stream.close();
+        } catch (Exception ignored) {
+            // Process completion and the structured result remain authoritative.
+        }
     }
 
     private static CapturedOutput awaitOutput(Future<CapturedOutput> future) {
@@ -296,12 +311,40 @@ final class CodexProcessRunner {
             return supportedScheme
                     && proxy.getHost() != null
                     && proxy.getRawUserInfo() == null
+                    && hasValidPort(proxy)
                     && (path == null || path.isEmpty() || path.equals("/"))
                     && proxy.getRawQuery() == null
                     && proxy.getRawFragment() == null;
         } catch (URISyntaxException error) {
             return false;
         }
+    }
+
+    private static boolean hasValidPort(URI proxy) {
+        String authority = proxy.getRawAuthority();
+        if (authority == null) {
+            return false;
+        }
+        boolean explicitPort;
+        if (authority.startsWith("[")) {
+            int closingBracket = authority.indexOf(']');
+            if (closingBracket < 0) {
+                return false;
+            }
+            String suffix = authority.substring(closingBracket + 1);
+            explicitPort = !suffix.isEmpty();
+            if (explicitPort && (!suffix.startsWith(":") || suffix.length() == 1)) {
+                return false;
+            }
+        } else {
+            int colon = authority.lastIndexOf(':');
+            explicitPort = colon >= 0;
+            if (explicitPort && colon == authority.length() - 1) {
+                return false;
+            }
+        }
+        int port = proxy.getPort();
+        return !explicitPort || (port >= 1 && port <= 65535);
     }
 
     private record CapturedOutput(String text, boolean truncated) {}

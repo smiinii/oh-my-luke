@@ -191,6 +191,7 @@ class CodexCliRuntimeTest {
                 sleep 30 &
                 child=$!
                 printf '%%s' "$child" > %s
+                sleep 0.1
                 cat >/dev/null
                 printf '%%s\\n' \
                   '{"type":"item.completed","item":{"type":"agent_message","text":"NO_ORPHAN"}}' \
@@ -205,6 +206,37 @@ class CodexCliRuntimeTest {
         assertEquals(AiRuntimeStatus.SUCCESS, result.status(), result.toString());
         long pid = Long.parseLong(Files.readString(childPid));
         assertFalse(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+    }
+
+    @Test
+    void returnsPromptlyWhenACompletedParentLeavesAnOutputPipeOpen() throws Exception {
+        Path childPid = project.resolve("fast-child.pid");
+        Path executable = executable("""
+                sleep 30 &
+                child=$!
+                printf '%%s' "$child" > %s
+                printf '%%s\\n' \
+                  '{"type":"item.completed","item":{"type":"agent_message","text":"BOUNDED"}}' \
+                  '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}'
+                """.formatted(shellPath(childPid)));
+
+        long started = System.nanoTime();
+        AiRuntimeResult result = new CodexCliRuntime(CodexCliConfiguration
+                .forExecutable(project, executable)
+                .withTimeout(Duration.ofSeconds(5)))
+                .invoke(request("fast-child-cleanup", "cleanup"));
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+        try {
+            assertEquals(AiRuntimeStatus.SUCCESS, result.status(), result.toString());
+            assertTrue(elapsedMillis < 3000, "runner exceeded its bounded cleanup window");
+        } finally {
+            if (Files.exists(childPid)) {
+                ProcessHandle.of(Long.parseLong(Files.readString(childPid)))
+                        .filter(ProcessHandle::isAlive)
+                        .ifPresent(ProcessHandle::destroyForcibly);
+            }
+        }
     }
 
     @Test
@@ -308,6 +340,58 @@ class CodexCliRuntimeTest {
     }
 
     @Test
+    void operatingSystemLockBlocksASecondJvmWhileTheFirstJvmHoldsIt() throws Exception {
+        Path firstStarted = project.resolve("first-started");
+        Path firstEntered = project.resolve("first-entered");
+        Path secondStarted = project.resolve("second-started");
+        Path secondEntered = project.resolve("second-entered");
+        Path release = project.resolve("release");
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        String classpath = System.getProperty("java.class.path");
+        Process first = new ProcessBuilder(
+                        java,
+                        "-cp",
+                        classpath,
+                        CodexInvocationStoreProcessFixture.class.getName(),
+                        project.toString(),
+                        "hold",
+                        firstStarted.toString(),
+                        firstEntered.toString(),
+                        release.toString())
+                .start();
+        Process second = null;
+        try {
+            awaitFile(firstEntered, first);
+            second = new ProcessBuilder(
+                            java,
+                            "-cp",
+                            classpath,
+                            CodexInvocationStoreProcessFixture.class.getName(),
+                            project.toString(),
+                            "wait",
+                            secondStarted.toString(),
+                            secondEntered.toString(),
+                            release.toString())
+                    .start();
+            awaitFile(secondStarted, second);
+            Thread.sleep(150);
+            assertFalse(Files.exists(secondEntered), "second JVM entered while the OS lock was held");
+            Files.writeString(release, "release");
+
+            assertTrue(first.waitFor(10, TimeUnit.SECONDS));
+            assertTrue(second.waitFor(10, TimeUnit.SECONDS));
+            assertEquals(0, first.exitValue(), new String(first.getErrorStream().readAllBytes()));
+            assertEquals(0, second.exitValue(), new String(second.getErrorStream().readAllBytes()));
+            assertTrue(Files.exists(secondEntered));
+        } finally {
+            first.destroyForcibly();
+            if (second != null) {
+                second.destroyForcibly();
+            }
+        }
+    }
+
+    @Test
     void probesOfficialVersionAndLoginCommandsWithoutReadingCredentialFiles() throws Exception {
         Path arguments = project.resolve("probe-arguments.txt");
         Path executable = executable("""
@@ -363,6 +447,17 @@ class CodexCliRuntimeTest {
         assertFalse(environment.containsKey("UNRELATED_FLAG"));
         assertFalse(environment.containsKey("HTTPS_PROXY"));
         assertFalse(environment.containsKey("ALL_PROXY"));
+
+        Map<String, String> malformedPorts = new HashMap<>(Map.of(
+                "HTTP_PROXY", "http://proxy.example:",
+                "HTTPS_PROXY", "https://proxy.example:65536",
+                "ALL_PROXY", "socks5://proxy.example:0",
+                "NO_PROXY", "localhost,127.0.0.1"));
+        CodexProcessRunner.restrictEnvironment(malformedPorts);
+        assertFalse(malformedPorts.containsKey("HTTP_PROXY"));
+        assertFalse(malformedPorts.containsKey("HTTPS_PROXY"));
+        assertFalse(malformedPorts.containsKey("ALL_PROXY"));
+        assertEquals("localhost,127.0.0.1", malformedPorts.get("NO_PROXY"));
     }
 
     @Test
@@ -393,6 +488,18 @@ class CodexCliRuntimeTest {
                   '{"type":"item.completed","item":{"type":"agent_message","text":"%s"}}' \
                   '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}'
                 """.formatted(shellPath(arguments), response));
+    }
+
+    private static void awaitFile(Path path, Process process) throws Exception {
+        for (int attempt = 0;
+                attempt < 500 && Files.notExists(path) && process.isAlive();
+                attempt++) {
+            Thread.sleep(10);
+        }
+        String error = process.isAlive()
+                ? "child JVM did not reach the expected barrier"
+                : new String(process.getErrorStream().readAllBytes());
+        assertTrue(Files.exists(path), error);
     }
 
     private Path executable(String body) throws IOException {
