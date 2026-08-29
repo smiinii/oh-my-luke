@@ -5,6 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.ohmyluke.ai.AiNode;
+import io.ohmyluke.ai.AiRequest;
+import io.ohmyluke.ai.AiRuntimeResult;
+import io.ohmyluke.ai.FakeAiExchange;
+import io.ohmyluke.ai.FakeAiRuntime;
 import io.ohmyluke.graph.Condition;
 import io.ohmyluke.graph.Edge;
 import io.ohmyluke.graph.ExecutionMetrics;
@@ -142,6 +147,38 @@ class ManagedRunServiceTest {
         assertEquals(7, inspection.policyState().usage());
         assertEquals(PolicyOutcome.LIMIT_REACHED, inspection.policyState().lastDecision().outcome());
         assertEquals("limit.tool-calls", inspection.policyState().lastDecision().reasonCode());
+    }
+
+    @Test
+    void persistsFakeAiUsageAndAppliesTheUsageLimit() {
+        PolicyConfiguration configuration = new PolicyConfiguration(0, 0, 0, 0, 7, 0, 0);
+        ManagedRunService service = service(configuration);
+        FakeAiRuntime runtime = new FakeAiRuntime(List.of(new FakeAiExchange(
+                new AiRequest("work:0", "Answer the request", Map.of("request", "same")),
+                AiRuntimeResult.success("done", 7))));
+        AiNode node = new AiNode(
+                WORK,
+                runtime,
+                "Answer the request",
+                List.of("request"),
+                "answer");
+        GraphDefinition graph = new GraphDefinition(
+                WORK,
+                Set.of(node),
+                List.of(new Edge(WORK, END, Condition.always())),
+                Set.of(END),
+                0);
+        service.start("fake-ai-usage", graph, Map.of("request", "same"), handoff());
+
+        RunState result = service.resume("fake-ai-usage", graph);
+        RunInspection inspection = service.inspect("fake-ai-usage");
+
+        assertEquals(RunStatus.COMPLETED, result.status());
+        assertEquals("done", result.values().get("answer"));
+        assertEquals(7, inspection.policyState().usage());
+        assertEquals(0, inspection.policyState().toolCalls());
+        assertEquals(PolicyOutcome.LIMIT_REACHED, inspection.policyState().lastDecision().outcome());
+        assertEquals("limit.usage", inspection.policyState().lastDecision().reasonCode());
     }
 
     @Test
