@@ -82,7 +82,7 @@ Windows:
 
 ## 문서
 
-- [코드 없이 이해하는 현재 동작](docs/how-it-works.md)
+- [코드 없이 이해하는 현재 동작](docs/how-it-works/README.md)
 - [제품 범위](docs/product.md)
 - [아키텍처](docs/architecture.md)
 - [보안 원칙](docs/security.md)

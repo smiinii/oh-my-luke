@@ -23,7 +23,7 @@ Core constraints:
 - Do not add Spring Boot, a database, a GUI, dynamic graphs, or parallel AI execution to the MVP.
 - Never claim token savings without reproducible benchmark evidence.
 - Keep Baseline and OML benchmark arms mutually isolated while giving both the same external capabilities.
-- After completing a milestone, update `docs/how-it-works.md` with a concise non-programmer explanation of the flow, purpose, verification evidence, and current limitations. Do not turn it into a class-by-class code reference.
+- After completing a milestone, add a concise numbered Markdown file under `docs/how-it-works/` and link it from `docs/how-it-works/README.md`. Explain the flow, purpose, verification evidence, and current limitations for non-programmers. Do not turn it into a class-by-class code reference.
 
 Benchmark isolation:
 
