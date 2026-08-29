@@ -10,10 +10,7 @@ public record ProjectFile(
         ProjectFileKind kind,
         Optional<ProjectLanguage> language) {
     public ProjectFile {
-        Objects.requireNonNull(relativePath, "relativePath");
-        if (relativePath.isAbsolute() || !relativePath.normalize().equals(relativePath)) {
-            throw new IllegalArgumentException("relativePath must be normalized and relative");
-        }
+        relativePath = ProjectRelativePaths.requireSafe(relativePath, "relativePath");
         if (size < 0) {
             throw new IllegalArgumentException("size must not be negative");
         }

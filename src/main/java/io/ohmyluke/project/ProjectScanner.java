@@ -11,6 +11,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -49,9 +50,16 @@ public final class ProjectScanner {
     public ProjectProfile scan(Path projectRoot, ProjectScanLimits limits) {
         Objects.requireNonNull(projectRoot, "projectRoot");
         Objects.requireNonNull(limits, "limits");
+        Path configuredRoot = projectRoot.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(configuredRoot)) {
+            throw new IllegalArgumentException("projectRoot must not be a symbolic link");
+        }
+        if (isForbiddenRoot(configuredRoot)) {
+            throw new IllegalArgumentException("projectRoot must not expose internal or sensitive data");
+        }
         Path realRoot;
         try {
-            realRoot = projectRoot.toRealPath();
+            realRoot = configuredRoot.toRealPath();
         } catch (IOException error) {
             throw new IllegalArgumentException("projectRoot must exist and be resolvable", error);
         }
@@ -74,19 +82,24 @@ public final class ProjectScanner {
             return;
         }
 
-        List<Path> entries;
+        List<Path> entries = new ArrayList<>();
+        int remainingEntries = accumulator.limits.maxEntries() - accumulator.visitedEntries;
         try (Stream<Path> listed = Files.list(directory)) {
-            entries = listed.sorted(Comparator.comparing(accumulator::relativeText)).toList();
+            Iterator<Path> iterator = listed.iterator();
+            while (iterator.hasNext()) {
+                if (entries.size() >= remainingEntries) {
+                    accumulator.stop(ProjectScanNotice.ENTRY_LIMIT_REACHED);
+                    return;
+                }
+                entries.add(iterator.next());
+            }
         } catch (IOException error) {
             throw new ProjectScanException("Unable to list project directory: " + directory, error);
         }
+        entries.sort(Comparator.comparing(accumulator::relativeText));
 
         for (Path entry : entries) {
             if (accumulator.stopped) {
-                return;
-            }
-            if (accumulator.visitedEntries >= accumulator.limits.maxEntries()) {
-                accumulator.stop(ProjectScanNotice.ENTRY_LIMIT_REACHED);
                 return;
             }
             accumulator.visitedEntries++;
@@ -146,9 +159,23 @@ public final class ProjectScanner {
         accumulator.files.add(file);
         accumulator.includedBytes += attributes.size();
         accumulator.detect(relative, file.language());
-        if (relative.getFileName().toString().equalsIgnoreCase("package.json")) {
+        if (relative.getNameCount() == 1
+                && relative.getFileName().toString().equalsIgnoreCase("package.json")) {
             accumulator.readNpmScripts(entry);
         }
+    }
+
+    private static boolean isForbiddenRoot(Path root) {
+        if (SensitivePathPolicy.isSensitive(root)) {
+            return true;
+        }
+        for (Path part : root) {
+            String name = part.toString();
+            if (name.equalsIgnoreCase(".git") || name.equalsIgnoreCase(".oml")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isCanonicalChildDirectory(Path directory, Path root) {
@@ -292,14 +319,14 @@ public final class ProjectScanner {
 
         private void detect(Path relative, Optional<ProjectLanguage> language) {
             String name = relative.getFileName().toString().toLowerCase(Locale.ROOT);
-            if (name.equals("build.gradle")
+            if (relative.getNameCount() == 1 && (name.equals("build.gradle")
                     || name.equals("build.gradle.kts")
                     || name.equals("settings.gradle")
-                    || name.equals("settings.gradle.kts")) {
+                    || name.equals("settings.gradle.kts"))) {
                 buildSystems.add(ProjectBuildSystem.GRADLE);
-            } else if (name.equals("pom.xml")) {
+            } else if (relative.getNameCount() == 1 && name.equals("pom.xml")) {
                 buildSystems.add(ProjectBuildSystem.MAVEN);
-            } else if (name.equals("package.json")) {
+            } else if (relative.getNameCount() == 1 && name.equals("package.json")) {
                 buildSystems.add(ProjectBuildSystem.NPM);
             }
             language.ifPresent(languages::add);
@@ -307,7 +334,12 @@ public final class ProjectScanner {
 
         private void readNpmScripts(Path packageJson) {
             try {
-                JsonNode scripts = JSON.readTree(Files.readAllBytes(packageJson)).path("scripts");
+                JsonNode manifest = JSON.readTree(Files.readAllBytes(packageJson));
+                if (manifest == null || !manifest.isObject()) {
+                    notices.add(ProjectScanNotice.MANIFEST_PARSE_FAILED);
+                    return;
+                }
+                JsonNode scripts = manifest.path("scripts");
                 npmBuild |= scripts.isObject() && scripts.has("build") && scripts.get("build").isTextual();
                 npmTest |= scripts.isObject() && scripts.has("test") && scripts.get("test").isTextual();
             } catch (IOException error) {

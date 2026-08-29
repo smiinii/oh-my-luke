@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -155,13 +156,14 @@ class ProjectScannerTest {
     @Test
     void stopsDeterministicallyAtEntryLimit() throws IOException {
         Path project = Files.createDirectory(temporaryDirectory.resolve("entry-limit"));
-        write(project, "c.txt", "c");
-        write(project, "a.txt", "a");
-        write(project, "b.txt", "b");
+        for (int index = 99; index >= 0; index--) {
+            write(project, "%03d.txt".formatted(index), "entry");
+        }
 
         ProjectProfile profile = scanner.scan(project, new ProjectScanLimits(2, 100, 100, 10));
 
-        assertEquals(List.of("a.txt", "b.txt"), relativeFiles(profile));
+        assertTrue(profile.files().isEmpty());
+        assertEquals(0, profile.summary().visitedEntries());
         assertTrue(profile.summary().truncated());
         assertTrue(profile.summary().notices().contains(ProjectScanNotice.ENTRY_LIMIT_REACHED));
     }
@@ -195,6 +197,72 @@ class ProjectScannerTest {
         assertEquals(List.of(ProjectBuildSystem.NPM), profile.buildSystems());
         assertTrue(profile.commandCandidates().isEmpty());
         assertTrue(profile.summary().notices().contains(ProjectScanNotice.MANIFEST_PARSE_FAILED));
+    }
+
+    @Test
+    void reportsEmptyOrNonObjectPackageManifest() throws IOException {
+        Path emptyProject = Files.createDirectory(temporaryDirectory.resolve("empty-package"));
+        write(emptyProject, "package.json", "");
+        Path arrayProject = Files.createDirectory(temporaryDirectory.resolve("array-package"));
+        write(arrayProject, "package.json", "[]");
+
+        assertTrue(scanner.scan(emptyProject).summary().notices()
+                .contains(ProjectScanNotice.MANIFEST_PARSE_FAILED));
+        assertTrue(scanner.scan(arrayProject).summary().notices()
+                .contains(ProjectScanNotice.MANIFEST_PARSE_FAILED));
+    }
+
+    @Test
+    void ignoresNestedBuildMarkersWhenCreatingRootCommands() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("nested-manifests"));
+        write(project, "docs/package.json", "{\"scripts\":{\"test\":\"docs-test\"}}");
+        write(project, "examples/pom.xml", "<project />");
+        write(project, "samples/build.gradle.kts", "plugins { java }");
+
+        ProjectProfile profile = scanner.scan(project);
+
+        assertTrue(profile.buildSystems().isEmpty());
+        assertTrue(profile.commandCandidates().isEmpty());
+    }
+
+    @Test
+    void rejectsInternalSensitiveOrSymbolicLinkRoots() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("forbidden-roots"));
+        Path oml = Files.createDirectories(project.resolve(".oml/runs"));
+        Path git = Files.createDirectories(project.resolve(".git/objects"));
+        Path ssh = Files.createDirectories(project.resolve(".ssh"));
+        write(oml, "state.json", "state");
+
+        assertThrows(IllegalArgumentException.class, () -> scanner.scan(oml));
+        assertThrows(IllegalArgumentException.class, () -> scanner.scan(git));
+        assertThrows(IllegalArgumentException.class, () -> scanner.scan(ssh));
+
+        Path link = temporaryDirectory.resolve("root-link");
+        try {
+            Files.createSymbolicLink(link, project);
+        } catch (UnsupportedOperationException | IOException | SecurityException error) {
+            Assumptions.abort("Symbolic links are unavailable on this test platform");
+        }
+        assertThrows(IllegalArgumentException.class, () -> scanner.scan(link));
+    }
+
+    @Test
+    void publicModelsRejectPathsThatCanEscapeProject() {
+        assertThrows(IllegalArgumentException.class, () -> new ProjectFile(
+                Path.of("../secret.txt"), 1, ProjectFileKind.OTHER, Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> new ProjectFile(
+                Path.of(""), 1, ProjectFileKind.OTHER, Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> new ProjectProfile(
+                temporaryDirectory.toAbsolutePath().normalize(),
+                "project",
+                List.of(),
+                List.of(),
+                List.of(Path.of("../outside")),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                new ProjectScanSummary(0, 0, 0, 0, false, List.of())));
     }
 
     @Test

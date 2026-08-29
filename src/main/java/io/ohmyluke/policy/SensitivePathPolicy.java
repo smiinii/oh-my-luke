@@ -51,12 +51,14 @@ public final class SensitivePathPolicy {
     private static boolean containsDirectory(String normalized, String directory) {
         return normalized.equals(directory)
                 || normalized.startsWith(directory + "/")
+                || normalized.endsWith("/" + directory)
                 || normalized.contains("/" + directory + "/");
     }
 
     private static boolean containsDirectorySequence(String normalized, String sequence) {
         return normalized.equals(sequence)
                 || normalized.startsWith(sequence + "/")
+                || normalized.endsWith("/" + sequence)
                 || normalized.contains("/" + sequence + "/");
     }
 }

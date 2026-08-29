@@ -36,9 +36,7 @@ public record ProjectProfile(
 
     private static List<Path> relativePaths(List<Path> paths, String name) {
         List<Path> copy = List.copyOf(Objects.requireNonNull(paths, name));
-        if (copy.stream().anyMatch(path -> path.isAbsolute() || !path.normalize().equals(path))) {
-            throw new IllegalArgumentException(name + " must contain normalized relative paths");
-        }
+        copy.forEach(path -> ProjectRelativePaths.requireSafe(path, name));
         return copy;
     }
 }
