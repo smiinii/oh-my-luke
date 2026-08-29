@@ -63,6 +63,9 @@ public final class ProjectScanner {
         } catch (IOException error) {
             throw new IllegalArgumentException("projectRoot must exist and be resolvable", error);
         }
+        if (isForbiddenRoot(realRoot)) {
+            throw new IllegalArgumentException("resolved projectRoot must not expose internal or sensitive data");
+        }
         if (!Files.isDirectory(realRoot, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("projectRoot must be a directory");
         }
@@ -100,6 +103,10 @@ public final class ProjectScanner {
 
         for (Path entry : entries) {
             if (accumulator.stopped) {
+                return;
+            }
+            if (accumulator.visitedEntries >= accumulator.limits.maxEntries()) {
+                accumulator.stop(ProjectScanNotice.ENTRY_LIMIT_REACHED);
                 return;
             }
             accumulator.visitedEntries++;

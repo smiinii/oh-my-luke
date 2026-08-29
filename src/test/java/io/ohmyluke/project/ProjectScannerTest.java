@@ -169,6 +169,21 @@ class ProjectScannerTest {
     }
 
     @Test
+    void recursiveTraversalNeverExceedsGlobalEntryLimit() throws IOException {
+        Path project = Files.createDirectory(temporaryDirectory.resolve("recursive-entry-limit"));
+        write(project, "a/inside.txt", "inside");
+        write(project, "z.txt", "outside");
+
+        ProjectProfile profile = scanner.scan(project, new ProjectScanLimits(2, 100, 100, 10));
+
+        assertEquals(2, profile.summary().visitedEntries());
+        assertTrue(profile.summary().visitedEntries() <= 2);
+        assertEquals(List.of("a/inside.txt"), relativeFiles(profile));
+        assertTrue(profile.summary().truncated());
+        assertTrue(profile.summary().notices().contains(ProjectScanNotice.ENTRY_LIMIT_REACHED));
+    }
+
+    @Test
     void stopsAtTotalByteLimitAndSkipsBeyondDepthLimit() throws IOException {
         Path bytesProject = Files.createDirectory(temporaryDirectory.resolve("byte-limit"));
         write(bytesProject, "a.txt", "1234");
@@ -231,11 +246,13 @@ class ProjectScannerTest {
         Path oml = Files.createDirectories(project.resolve(".oml/runs"));
         Path git = Files.createDirectories(project.resolve(".git/objects"));
         Path ssh = Files.createDirectories(project.resolve(".ssh"));
+        Path sshEnvironmentTemplate = Files.createDirectories(ssh.resolve(".env.example"));
         write(oml, "state.json", "state");
 
         assertThrows(IllegalArgumentException.class, () -> scanner.scan(oml));
         assertThrows(IllegalArgumentException.class, () -> scanner.scan(git));
         assertThrows(IllegalArgumentException.class, () -> scanner.scan(ssh));
+        assertThrows(IllegalArgumentException.class, () -> scanner.scan(sshEnvironmentTemplate));
 
         Path link = temporaryDirectory.resolve("root-link");
         try {
@@ -244,6 +261,14 @@ class ProjectScannerTest {
             Assumptions.abort("Symbolic links are unavailable on this test platform");
         }
         assertThrows(IllegalArgumentException.class, () -> scanner.scan(link));
+
+        Path intermediateLink = temporaryDirectory.resolve("apparently-safe");
+        try {
+            Files.createSymbolicLink(intermediateLink, project.resolve(".oml"));
+        } catch (UnsupportedOperationException | IOException | SecurityException error) {
+            Assumptions.abort("Symbolic links are unavailable on this test platform");
+        }
+        assertThrows(IllegalArgumentException.class, () -> scanner.scan(intermediateLink.resolve("runs")));
     }
 
     @Test

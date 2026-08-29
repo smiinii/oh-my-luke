@@ -29,15 +29,7 @@ public final class SensitivePathPolicy {
         String fileName = path.getFileName() == null
                 ? ""
                 : path.getFileName().toString().toLowerCase(Locale.ROOT);
-        if (fileName.equals(".env.example") || fileName.equals(".env.template")) {
-            return false;
-        }
-        return SECRET_NAMES.contains(fileName)
-                || (fileName.startsWith(".env.")
-                        && !fileName.equals(".env.example")
-                        && !fileName.equals(".env.template"))
-                || SECRET_SUFFIXES.stream().anyMatch(fileName::endsWith)
-                || containsDirectory(normalized, ".ssh")
+        boolean sensitiveDirectory = containsDirectory(normalized, ".ssh")
                 || containsDirectory(normalized, ".aws")
                 || containsDirectorySequence(normalized, ".config/gh")
                 || containsDirectorySequence(normalized, ".config/codex")
@@ -46,6 +38,12 @@ public final class SensitivePathPolicy {
                 || containsDirectory(normalized, ".claude")
                 || containsDirectory(normalized, ".azure")
                 || containsDirectorySequence(normalized, ".config/gcloud");
+        boolean environmentTemplate = fileName.equals(".env.example")
+                || fileName.equals(".env.template");
+        return sensitiveDirectory
+                || (!environmentTemplate && SECRET_NAMES.contains(fileName))
+                || (!environmentTemplate && fileName.startsWith(".env."))
+                || SECRET_SUFFIXES.stream().anyMatch(fileName::endsWith);
     }
 
     private static boolean containsDirectory(String normalized, String directory) {
