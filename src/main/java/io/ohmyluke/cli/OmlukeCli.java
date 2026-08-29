@@ -4,6 +4,8 @@ import io.ohmyluke.graph.GraphDefinition;
 import io.ohmyluke.graph.RunState;
 import io.ohmyluke.runtime.ManagedRunService;
 import io.ohmyluke.runtime.RunInspection;
+import io.ohmyluke.policy.PermissionMessages;
+import io.ohmyluke.state.ProjectPermissionManager;
 import java.io.PrintStream;
 import java.util.Objects;
 
@@ -11,16 +13,19 @@ import java.util.Objects;
 public final class OmlukeCli {
     private final ManagedRunService runs;
     private final GraphResolver graphs;
+    private final ProjectPermissionManager permissions;
     private final PrintStream out;
     private final PrintStream error;
 
     public OmlukeCli(
             ManagedRunService runs,
             GraphResolver graphs,
+            ProjectPermissionManager permissions,
             PrintStream out,
             PrintStream error) {
         this.runs = Objects.requireNonNull(runs, "runs");
         this.graphs = Objects.requireNonNull(graphs, "graphs");
+        this.permissions = Objects.requireNonNull(permissions, "permissions");
         this.out = Objects.requireNonNull(out, "out");
         this.error = Objects.requireNonNull(error, "error");
     }
@@ -32,24 +37,54 @@ public final class OmlukeCli {
             printUsage(out);
             return 0;
         }
-        if (args.length != 2) {
-            printUsage(error);
-            return 2;
-        }
         try {
-            return switch (args[0]) {
-                case "inspect" -> inspect(args[1]);
-                case "cancel" -> cancel(args[1]);
-                case "resume" -> resume(args[1]);
-                default -> {
-                    printUsage(error);
-                    yield 2;
-                }
-            };
+            if (args[0].equals("permissions")) {
+                return permissions(args);
+            }
+            if (args.length == 2) {
+                return switch (args[0]) {
+                    case "inspect" -> inspect(args[1]);
+                    case "cancel" -> cancel(args[1]);
+                    case "resume" -> resume(args[1]);
+                    default -> usageError();
+                };
+            }
+            return usageError();
         } catch (RuntimeException failure) {
             error.println("오류: " + failure.getMessage());
             return 1;
         }
+    }
+
+    private int permissions(String[] args) {
+        if (args.length == 2 && args[1].equals("show")) {
+            out.println("autonomousProject=" + permissions.settings().autonomousProject());
+            out.println("rememberedGrants=" + permissions.settings().grants().size());
+            return 0;
+        }
+        if (args.length == 2 && args[1].equals("reset")) {
+            permissions.reset();
+            out.println("저장된 승인과 프로젝트 자율 실행을 초기화했습니다.");
+            return 0;
+        }
+        if (args.length == 3 && args[1].equals("autonomous")) {
+            if (args[2].equals("on")) {
+                permissions.setAutonomousProject(true);
+                out.println(PermissionMessages.autonomousEnabled());
+                return 0;
+            }
+            if (args[2].equals("off")) {
+                permissions.setAutonomousProject(false);
+                out.println("프로젝트 자율 실행을 해제했습니다. 필요한 작업은 다시 승인을 요청합니다.");
+                return 0;
+            }
+        }
+        return usageError();
+    }
+
+    private int usageError() {
+        printUsage(error);
+        return 2;
     }
 
     private int inspect(String runId) {
@@ -96,5 +131,7 @@ public final class OmlukeCli {
 
     private static void printUsage(PrintStream target) {
         target.println("사용법: omluke <inspect|cancel|resume> <run-id>");
+        target.println("       omluke permissions <show|reset>");
+        target.println("       omluke permissions autonomous <on|off>");
     }
 }

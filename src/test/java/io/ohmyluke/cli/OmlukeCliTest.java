@@ -21,10 +21,13 @@ import io.ohmyluke.state.HandoffNote;
 import io.ohmyluke.state.HandoffStore;
 import io.ohmyluke.state.RunEventCodec;
 import io.ohmyluke.state.RunLockManager;
+import io.ohmyluke.state.ProjectPermissionManager;
+import io.ohmyluke.state.ProjectPermissionStore;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -50,6 +53,7 @@ class OmlukeCliTest {
         OmlukeCli cli = new OmlukeCli(
                 runs,
                 resolver,
+                permissionManager(),
                 new PrintStream(output, true, StandardCharsets.UTF_8),
                 new PrintStream(errors, true, StandardCharsets.UTF_8));
 
@@ -67,6 +71,30 @@ class OmlukeCliTest {
         assertEquals("", errors.toString(StandardCharsets.UTF_8));
     }
 
+    @Test
+    void managesRememberedProjectPermissionsWithoutEditingTheFileDirectly() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ByteArrayOutputStream errors = new ByteArrayOutputStream();
+        OmlukeCli cli = new OmlukeCli(
+                service(),
+                GraphResolver.none(),
+                permissionManager(),
+                new PrintStream(output, true, StandardCharsets.UTF_8),
+                new PrintStream(errors, true, StandardCharsets.UTF_8));
+
+        assertEquals(0, cli.execute(new String[] {"permissions", "autonomous", "on"}));
+        assertEquals(0, cli.execute(new String[] {"permissions", "show"}));
+        assertEquals(0, cli.execute(new String[] {"permissions", "reset"}));
+        assertEquals(0, cli.execute(new String[] {"permissions", "show"}));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("앞으로 허용 가능한 작업은 묻지 않고 실행합니다"));
+        assertTrue(text.contains("autonomousProject=true"));
+        assertTrue(text.contains("저장된 승인과 프로젝트 자율 실행을 초기화했습니다"));
+        assertTrue(text.contains("autonomousProject=false"));
+        assertEquals("", errors.toString(StandardCharsets.UTF_8));
+    }
+
     private ManagedRunService service() {
         return new ManagedRunService(
                 new GraphRunner(new GraphValidator()),
@@ -74,6 +102,12 @@ class OmlukeCliTest {
                 new EventLogStore(projectRoot, new RunEventCodec()),
                 new HandoffStore(projectRoot),
                 new RunLockManager(projectRoot));
+    }
+
+    private ProjectPermissionManager permissionManager() {
+        return new ProjectPermissionManager(
+                new ProjectPermissionStore(projectRoot),
+                Clock.systemUTC());
     }
 
     private static GraphDefinition graph() {

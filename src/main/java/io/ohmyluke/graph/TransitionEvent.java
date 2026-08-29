@@ -12,7 +12,8 @@ public record TransitionEvent(
         String selectionReason,
         StatePatch statePatch,
         Map<String, String> stateAfter,
-        FailureInfo failure) {
+        FailureInfo failure,
+        ExecutionMetrics metrics) {
     public TransitionEvent {
         if (step < 1) {
             throw new IllegalArgumentException("step must be positive");
@@ -23,6 +24,7 @@ public record TransitionEvent(
         Objects.requireNonNull(selectionReason, "selectionReason");
         Objects.requireNonNull(statePatch, "statePatch");
         stateAfter = ImmutableStringMap.copyOf(stateAfter);
+        metrics = metrics == null ? ExecutionMetrics.NONE : metrics;
         if (outcome != Outcome.FAILURE && failure != null) {
             throw new IllegalArgumentException("failure identity is only valid for FAILURE outcomes");
         }
@@ -36,6 +38,18 @@ public record TransitionEvent(
             String selectionReason,
             StatePatch statePatch,
             Map<String, String> stateAfter) {
-        this(step, node, outcome, nextNode, selectionReason, statePatch, stateAfter, null);
+        this(step, node, outcome, nextNode, selectionReason, statePatch, stateAfter, null, ExecutionMetrics.NONE);
+    }
+
+    public TransitionEvent(
+            int step,
+            NodeId node,
+            Outcome outcome,
+            NodeId nextNode,
+            String selectionReason,
+            StatePatch statePatch,
+            Map<String, String> stateAfter,
+            FailureInfo failure) {
+        this(step, node, outcome, nextNode, selectionReason, statePatch, stateAfter, failure, ExecutionMetrics.NONE);
     }
 }

@@ -17,6 +17,7 @@ java {
 
 dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.21.6")
+    implementation("net.java.dev.jna:jna:5.19.1")
 
     testImplementation(platform("org.junit:junit-bom:5.14.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -37,5 +38,6 @@ tasks.test {
     useJUnitPlatform()
     testLogging {
         events("failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
