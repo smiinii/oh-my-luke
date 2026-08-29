@@ -146,14 +146,14 @@ public final class CodexCliRuntime implements AiRuntime {
             AiFailureCode code = classifyFailure(process.stderr());
             return failureWithObservedUsage(code, parsed);
         }
-        if (process.inputWriteFailed()) {
-            return AiRuntimeResult.failure(AiFailureCode.EXECUTION_FAILED, 0);
-        }
         if (parsed == null
                 || parsed.failed()
                 || !parsed.completed()
                 || parsed.finalMessage().isBlank()) {
             return failureWithObservedUsage(AiFailureCode.INVALID_RESPONSE, parsed);
+        }
+        if (process.inputWriteFailed()) {
+            return AiRuntimeResult.failure(AiFailureCode.EXECUTION_FAILED, 0);
         }
         if (parsed.tokenUsage().available()) {
             return AiRuntimeResult.success(

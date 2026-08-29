@@ -76,6 +76,7 @@ final class CodexProcessRunner {
             Future<?> descendantObserver = tasks.submit(
                     () -> observeDescendants(process, descendants, observerReady));
             awaitObserverReady(observerReady);
+            observeBeforeInput(process, descendants);
             Future<Boolean> inputWritten = tasks.submit(() -> writeInput(process, input));
             boolean completed = waitFor(process, timeout, descendants);
             if (!completed) {
@@ -95,6 +96,16 @@ final class CodexProcessRunner {
                     standardError.text(),
                     standardOutput.truncated() || standardError.truncated(),
                     !writeSucceeded);
+        }
+    }
+
+    private static void observeBeforeInput(
+            Process process,
+            Set<ProcessHandle> descendants) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
+        while (process.isAlive() && System.nanoTime() < deadline) {
+            process.descendants().forEach(descendants::add);
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
         }
     }
 
