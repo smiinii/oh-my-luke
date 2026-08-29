@@ -166,6 +166,25 @@ class CodexCliRuntimeTest {
     }
 
     @Test
+    void keepsSuccessfulResponseWhenTokenUsageSubsetsAreInconsistent() throws Exception {
+        Path executable = executable("""
+                cat >/dev/null
+                printf '%s\\n' \
+                  '{"type":"item.completed","item":{"type":"agent_message","text":"STILL_OK"}}' \
+                  '{"type":"turn.completed","usage":{"input_tokens":3,"cached_input_tokens":4,"output_tokens":2,"reasoning_output_tokens":3}}'
+                """);
+
+        AiRuntimeResult result = new CodexCliRuntime(
+                CodexCliConfiguration.forExecutable(project, executable))
+                .invoke(request("inconsistent-usage", "inconsistent"));
+
+        assertEquals(AiRuntimeStatus.SUCCESS, result.status(), result.toString());
+        assertEquals("STILL_OK", result.output());
+        assertFalse(result.tokenUsage().available());
+        assertEquals(0, result.usage());
+    }
+
+    @Test
     void terminatesDescendantsAfterCodexExitsNormally() throws Exception {
         Path childPid = project.resolve("child.pid");
         Path executable = executable("""
@@ -328,6 +347,7 @@ class CodexCliRuntimeTest {
                 "UNRELATED_FLAG", "value",
                 "HTTPS_PROXY", "https://user:password@proxy.example"));
         environment.put("HTTP_PROXY", "http://proxy.example");
+        environment.put("ALL_PROXY", "user:password@proxy.example:1080");
 
         CodexProcessRunner.restrictEnvironment(environment);
 
@@ -342,6 +362,7 @@ class CodexCliRuntimeTest {
         assertFalse(environment.containsKey("DATABASE_URL"));
         assertFalse(environment.containsKey("UNRELATED_FLAG"));
         assertFalse(environment.containsKey("HTTPS_PROXY"));
+        assertFalse(environment.containsKey("ALL_PROXY"));
     }
 
     @Test

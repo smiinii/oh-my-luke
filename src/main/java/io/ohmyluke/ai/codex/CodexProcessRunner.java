@@ -4,6 +4,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -266,18 +268,40 @@ final class CodexProcessRunner {
             if (!ALLOWED_ENVIRONMENT.contains(name)) {
                 return true;
             }
-            return containsUriUserInfo(entry.getValue());
+            return isProxyVariable(name) && !isCredentialFreeProxy(entry.getValue());
         });
     }
 
-    private static boolean containsUriUserInfo(String value) {
-        int scheme = value.indexOf("://");
-        int at = value.indexOf('@', scheme + 3);
-        if (scheme < 0 || at < 0) {
+    private static boolean isProxyVariable(String name) {
+        return name.equals("HTTP_PROXY")
+                || name.equals("HTTPS_PROXY")
+                || name.equals("ALL_PROXY");
+    }
+
+    private static boolean isCredentialFreeProxy(String value) {
+        if (value == null || value.isBlank()) {
             return false;
         }
-        int slash = value.indexOf('/', scheme + 3);
-        return slash < 0 || at < slash;
+        try {
+            URI proxy = new URI(value.contains("://") ? value : "http://" + value);
+            String scheme = proxy.getScheme() == null
+                    ? ""
+                    : proxy.getScheme().toLowerCase(Locale.ROOT);
+            boolean supportedScheme = scheme.equals("http")
+                    || scheme.equals("https")
+                    || scheme.equals("socks")
+                    || scheme.equals("socks5")
+                    || scheme.equals("socks5h");
+            String path = proxy.getRawPath();
+            return supportedScheme
+                    && proxy.getHost() != null
+                    && proxy.getRawUserInfo() == null
+                    && (path == null || path.isEmpty() || path.equals("/"))
+                    && proxy.getRawQuery() == null
+                    && proxy.getRawFragment() == null;
+        } catch (URISyntaxException error) {
+            return false;
+        }
     }
 
     private record CapturedOutput(String text, boolean truncated) {}

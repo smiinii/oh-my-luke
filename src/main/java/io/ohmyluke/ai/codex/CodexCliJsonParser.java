@@ -106,7 +106,12 @@ final class CodexCliJsonParser {
         Long cachedInput = optionalNonNegativeLong(usage, "cached_input_tokens");
         Long output = optionalNonNegativeLong(usage, "output_tokens");
         Long reasoningOutput = optionalNonNegativeLong(usage, "reasoning_output_tokens");
-        if (input == null || cachedInput == null || output == null || reasoningOutput == null) {
+        if (input == null
+                || cachedInput == null
+                || output == null
+                || reasoningOutput == null
+                || cachedInput > input
+                || reasoningOutput > output) {
             return null;
         }
         return new TokenCounts(input, cachedInput, output, reasoningOutput);
