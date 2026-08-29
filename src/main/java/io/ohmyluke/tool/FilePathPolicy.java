@@ -1,32 +1,16 @@
 package io.ohmyluke.tool;
 
 import io.ohmyluke.policy.ToolCapability;
+import io.ohmyluke.policy.SensitivePathPolicy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Set;
 
 /** Classifies exact file targets and rejects symlink, secret, OML, and protected-system access. */
 final class FilePathPolicy {
-    private static final Set<String> SECRET_NAMES = Set.of(
-            ".env",
-            ".npmrc",
-            ".netrc",
-            ".pypirc",
-            "settings.xml",
-            "credentials",
-            "credentials.json",
-            "service-account.json",
-            "docker-config.json",
-            "id_rsa",
-            "id_ed25519",
-            "hosts.yml");
-    private static final List<String> SECRET_SUFFIXES = List.of(".pem", ".key", ".p12", ".pfx");
-
     private final Path configuredRoot;
     private final Path projectRoot;
     private final Path omlRoot;
@@ -128,27 +112,7 @@ final class FilePathPolicy {
     }
 
     static boolean isSensitive(Path path) {
-        String normalized = path.toString().replace('\\', '/').toLowerCase(Locale.ROOT);
-        String fileName = path.getFileName() == null
-                ? ""
-                : path.getFileName().toString().toLowerCase(Locale.ROOT);
-        if (fileName.equals(".env.example") || fileName.equals(".env.template")) {
-            return false;
-        }
-        return SECRET_NAMES.contains(fileName)
-                || (fileName.startsWith(".env.")
-                        && !fileName.equals(".env.example")
-                        && !fileName.equals(".env.template"))
-                || SECRET_SUFFIXES.stream().anyMatch(fileName::endsWith)
-                || normalized.contains("/.ssh/")
-                || normalized.contains("/.aws/")
-                || normalized.contains("/.config/gh/")
-                || normalized.contains("/.config/codex/")
-                || normalized.contains("/.config/openai/")
-                || normalized.contains("/.codex/")
-                || normalized.contains("/.claude/")
-                || normalized.contains("/.azure/")
-                || normalized.contains("/.config/gcloud/");
+        return SensitivePathPolicy.isSensitive(path);
     }
 
     static boolean isProtectedSystemPath(Path path) {
