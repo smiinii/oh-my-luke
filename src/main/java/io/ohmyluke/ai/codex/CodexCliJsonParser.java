@@ -14,7 +14,8 @@ final class CodexCliJsonParser {
         String threadId = "";
         boolean completed = false;
         boolean failed = false;
-        boolean measured = false;
+        boolean usageComplete = true;
+        boolean sawUsage = false;
         long inputTokens = 0;
         long cachedInputTokens = 0;
         long outputTokens = 0;
@@ -40,16 +41,19 @@ final class CodexCliJsonParser {
                 case "turn.completed" -> {
                     completed = true;
                     JsonNode usage = event.get("usage");
-                    if (usage != null && usage.isObject()) {
-                        inputTokens = saturatedAdd(inputTokens, requiredNonNegativeLong(usage, "input_tokens"));
+                    TokenCounts counts = optionalTokenCounts(usage);
+                    if (counts == null) {
+                        usageComplete = false;
+                    } else {
+                        inputTokens = saturatedAdd(inputTokens, counts.inputTokens());
                         cachedInputTokens = saturatedAdd(
                                 cachedInputTokens,
-                                requiredNonNegativeLong(usage, "cached_input_tokens"));
-                        outputTokens = saturatedAdd(outputTokens, requiredNonNegativeLong(usage, "output_tokens"));
+                                counts.cachedInputTokens());
+                        outputTokens = saturatedAdd(outputTokens, counts.outputTokens());
                         reasoningOutputTokens = saturatedAdd(
                                 reasoningOutputTokens,
-                                requiredNonNegativeLong(usage, "reasoning_output_tokens"));
-                        measured = true;
+                                counts.reasoningOutputTokens());
+                        sawUsage = true;
                     }
                 }
                 case "turn.failed", "error" -> failed = true;
@@ -58,7 +62,7 @@ final class CodexCliJsonParser {
                 }
             }
         }
-        AiTokenUsage usage = measured
+        AiTokenUsage usage = usageComplete && sawUsage
                 ? AiTokenUsage.measured(
                         inputTokens,
                         cachedInputTokens,
@@ -94,14 +98,28 @@ final class CodexCliJsonParser {
         return value != null && value.isTextual() ? value.textValue() : fallback;
     }
 
-    private static long requiredNonNegativeLong(JsonNode object, String field) {
+    private static TokenCounts optionalTokenCounts(JsonNode usage) {
+        if (usage == null || !usage.isObject()) {
+            return null;
+        }
+        Long input = optionalNonNegativeLong(usage, "input_tokens");
+        Long cachedInput = optionalNonNegativeLong(usage, "cached_input_tokens");
+        Long output = optionalNonNegativeLong(usage, "output_tokens");
+        Long reasoningOutput = optionalNonNegativeLong(usage, "reasoning_output_tokens");
+        if (input == null || cachedInput == null || output == null || reasoningOutput == null) {
+            return null;
+        }
+        return new TokenCounts(input, cachedInput, output, reasoningOutput);
+    }
+
+    private static Long optionalNonNegativeLong(JsonNode object, String field) {
         JsonNode value = object.get(field);
         if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
-            throw new IllegalArgumentException("Codex JSONL token field is missing or invalid: " + field);
+            return null;
         }
         long result = value.longValue();
         if (result < 0) {
-            throw new IllegalArgumentException("Codex JSONL token field must not be negative: " + field);
+            return null;
         }
         return result;
     }
@@ -112,4 +130,10 @@ final class CodexCliJsonParser {
         }
         return left + right;
     }
+
+    private record TokenCounts(
+            long inputTokens,
+            long cachedInputTokens,
+            long outputTokens,
+            long reasoningOutputTokens) {}
 }

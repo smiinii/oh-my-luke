@@ -46,7 +46,7 @@ class CodexCliRuntimeTest {
 
         AiRuntimeResult result = runtime.invoke(request("call-1", "답해줘"));
 
-        assertEquals(AiRuntimeStatus.SUCCESS, result.status());
+        assertEquals(AiRuntimeStatus.SUCCESS, result.status(), result.toString());
         assertEquals("OML_OK", result.output());
         assertEquals(120, result.usage());
         assertTrue(result.tokenUsage().available());
@@ -84,7 +84,7 @@ class CodexCliRuntimeTest {
         AiRuntimeResult result = new CodexCliRuntime(configuration)
                 .invoke(request("call-2", "explicit"));
 
-        assertEquals(AiRuntimeStatus.SUCCESS, result.status());
+        assertEquals(AiRuntimeStatus.SUCCESS, result.status(), result.toString());
         String forwarded = Files.readString(arguments);
         assertTrue(forwarded.contains("--model\ngpt-test-codex\n"));
         assertTrue(forwarded.contains("--config\nmodel_reasoning_effort=\"xhigh\"\n"));
@@ -147,6 +147,48 @@ class CodexCliRuntimeTest {
     }
 
     @Test
+    void keepsSuccessfulResponseWhenTokenUsageSchemaIsIncomplete() throws Exception {
+        Path executable = executable("""
+                cat >/dev/null
+                printf '%s\\n' \
+                  '{"type":"item.completed","item":{"type":"agent_message","text":"STILL_OK"}}' \
+                  '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":2}}'
+                """);
+
+        AiRuntimeResult result = new CodexCliRuntime(
+                CodexCliConfiguration.forExecutable(project, executable))
+                .invoke(request("partial-usage", "partial"));
+
+        assertEquals(AiRuntimeStatus.SUCCESS, result.status(), result.toString());
+        assertEquals("STILL_OK", result.output());
+        assertFalse(result.tokenUsage().available());
+        assertEquals(0, result.usage());
+    }
+
+    @Test
+    void terminatesDescendantsAfterCodexExitsNormally() throws Exception {
+        Path childPid = project.resolve("child.pid");
+        Path executable = executable("""
+                sleep 30 &
+                child=$!
+                printf '%%s' "$child" > %s
+                cat >/dev/null
+                printf '%%s\\n' \
+                  '{"type":"item.completed","item":{"type":"agent_message","text":"NO_ORPHAN"}}' \
+                  '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}'
+                """.formatted(shellPath(childPid)));
+
+        AiRuntimeResult result = new CodexCliRuntime(CodexCliConfiguration
+                .forExecutable(project, executable)
+                .withTimeout(Duration.ofSeconds(5)))
+                .invoke(request("child-cleanup", "cleanup"));
+
+        assertEquals(AiRuntimeStatus.SUCCESS, result.status(), result.toString());
+        long pid = Long.parseLong(Files.readString(childPid));
+        assertFalse(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+    }
+
+    @Test
     void failsClosedWhenCodexOutputExceedsTheConfiguredLimit() throws Exception {
         Path executable = executable("""
                 cat >/dev/null
@@ -204,6 +246,49 @@ class CodexCliRuntimeTest {
     }
 
     @Test
+    void operatingSystemLockPreventsDuplicateInvocationAcrossJvmProcesses() throws Exception {
+        Path executions = project.resolve("cross-jvm-executions.txt");
+        Path executable = executable("""
+                printf 'x' >> %s
+                sleep 0.3
+                cat >/dev/null
+                printf '%%s\\n' \
+                  '{"type":"item.completed","item":{"type":"agent_message","text":"CROSS_JVM"}}' \
+                  '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}'
+                """.formatted(shellPath(executions)));
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        String classpath = System.getProperty("java.class.path");
+        Process first = new ProcessBuilder(
+                        java,
+                        "-cp",
+                        classpath,
+                        CodexInvocationProcessFixture.class.getName(),
+                        project.toString(),
+                        executable.toString(),
+                        "cross-jvm-call")
+                .start();
+        Process second = new ProcessBuilder(
+                        java,
+                        "-cp",
+                        classpath,
+                        CodexInvocationProcessFixture.class.getName(),
+                        project.toString(),
+                        executable.toString(),
+                        "cross-jvm-call")
+                .start();
+        try {
+            assertTrue(first.waitFor(10, TimeUnit.SECONDS));
+            assertTrue(second.waitFor(10, TimeUnit.SECONDS));
+            assertEquals(0, first.exitValue(), new String(first.getErrorStream().readAllBytes()));
+            assertEquals(0, second.exitValue(), new String(second.getErrorStream().readAllBytes()));
+            assertEquals("x", Files.readString(executions));
+        } finally {
+            first.destroyForcibly();
+            second.destroyForcibly();
+        }
+    }
+
+    @Test
     void probesOfficialVersionAndLoginCommandsWithoutReadingCredentialFiles() throws Exception {
         Path arguments = project.resolve("probe-arguments.txt");
         Path executable = executable("""
@@ -230,22 +315,32 @@ class CodexCliRuntimeTest {
     }
 
     @Test
-    void removesSecretEnvironmentButKeepsPathsNeededForSavedCliLogin() {
+    void allowsOnlyEnvironmentNeededForSavedCliLoginAndConnectivity() {
         Map<String, String> environment = new HashMap<>(Map.of(
                 "HOME", "/safe/home",
                 "CODEX_HOME", "/safe/codex",
                 "PATH", "/usr/bin",
                 "OPENAI_API_KEY", "secret",
                 "GITHUB_TOKEN", "secret",
+                "AWS_SECRET_ACCESS_KEY", "secret",
+                "STRIPE_SECRET_KEY", "secret",
+                "DATABASE_URL", "postgres://user:password@database.example/app",
+                "UNRELATED_FLAG", "value",
                 "HTTPS_PROXY", "https://user:password@proxy.example"));
+        environment.put("HTTP_PROXY", "http://proxy.example");
 
-        CodexProcessRunner.removeSecretEnvironment(environment);
+        CodexProcessRunner.restrictEnvironment(environment);
 
         assertEquals("/safe/home", environment.get("HOME"));
         assertEquals("/safe/codex", environment.get("CODEX_HOME"));
         assertEquals("/usr/bin", environment.get("PATH"));
+        assertEquals("http://proxy.example", environment.get("HTTP_PROXY"));
         assertFalse(environment.containsKey("OPENAI_API_KEY"));
         assertFalse(environment.containsKey("GITHUB_TOKEN"));
+        assertFalse(environment.containsKey("AWS_SECRET_ACCESS_KEY"));
+        assertFalse(environment.containsKey("STRIPE_SECRET_KEY"));
+        assertFalse(environment.containsKey("DATABASE_URL"));
+        assertFalse(environment.containsKey("UNRELATED_FLAG"));
         assertFalse(environment.containsKey("HTTPS_PROXY"));
     }
 
