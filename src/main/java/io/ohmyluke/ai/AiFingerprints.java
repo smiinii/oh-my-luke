@@ -62,8 +62,7 @@ final class AiFingerprints {
         if (result.failure() == null) {
             append(target, "none");
         } else {
-            append(target, result.failure().code());
-            append(target, result.failure().reason().name());
+            append(target, result.failure().code().name());
         }
     }
 

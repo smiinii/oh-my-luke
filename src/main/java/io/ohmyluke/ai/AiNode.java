@@ -54,6 +54,12 @@ public final class AiNode implements Node {
     @Override
     public NodeResult execute(NodeContext context) {
         Objects.requireNonNull(context, "context");
+        if (context.runId().equals(NodeContext.LOCAL_RUN_ID)) {
+            return NodeResult.failure(new FailureInfo(
+                    "ai-input",
+                    "missing-run-scope",
+                    "AI node requires an explicit run scope"));
+        }
         LinkedHashMap<String, String> selected = new LinkedHashMap<>();
         for (String key : inputStateKeys) {
             String value = context.values().get(key);
@@ -79,7 +85,10 @@ public final class AiNode implements Node {
         }
         return NodeResult.failure(
                 StatePatch.empty(),
-                new FailureInfo("ai-runtime", result.failure().code(), result.failure().publicCause()),
+                new FailureInfo(
+                        "ai-runtime",
+                        result.failure().code().stableCode(),
+                        result.failure().publicCause()),
                 metrics);
     }
 

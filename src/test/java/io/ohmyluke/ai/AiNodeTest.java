@@ -26,11 +26,12 @@ class AiNodeTest {
 
     @Test
     void writesSuccessfulOutputAndReportsUsageWithoutAToolCall() {
-        AiRequest expected = request("local", 0, "Create a plan", Map.of("goal", "ship"));
+        AiRequest expected = request("test-run", 0, "Create a plan", Map.of("goal", "ship"));
         FakeAiRuntime runtime = runtime(expected, AiRuntimeResult.success("step one", 13));
         AiNode node = node(runtime, List.of("goal"));
 
-        NodeResult result = node.execute(new NodeContext(Map.of("goal", "ship", "secret", "hidden"), 0));
+        NodeResult result = node.execute(new NodeContext(
+                Map.of("goal", "ship", "secret", "hidden"), 0, "test-run"));
 
         assertEquals(Outcome.SUCCESS, result.outcome());
         assertEquals(Map.of("ai.plan.output", "step one"), result.statePatch().updates());
@@ -40,17 +41,17 @@ class AiNodeTest {
 
     @Test
     void convertsRuntimeFailureToStableGraphFailureAndKeepsUsage() {
-        AiRequest expected = request("local", 3, "Create a plan", Map.of("goal", "ship"));
+        AiRequest expected = request("test-run", 3, "Create a plan", Map.of("goal", "ship"));
         FakeAiRuntime runtime = runtime(
                 expected,
-                AiRuntimeResult.failure("fake.model-error", AiFailureReason.EXECUTION_FAILED, 5));
+                AiRuntimeResult.failure(AiFailureCode.EXECUTION_FAILED, 5));
         AiNode node = node(runtime, List.of("goal"));
 
-        NodeResult result = node.execute(new NodeContext(Map.of("goal", "ship"), 3));
+        NodeResult result = node.execute(new NodeContext(Map.of("goal", "ship"), 3, "test-run"));
 
         assertEquals(Outcome.FAILURE, result.outcome());
         assertEquals("ai-runtime", result.failureInfo().type());
-        assertEquals("fake.model-error", result.failureInfo().code());
+        assertEquals("runtime.execution-failed", result.failureInfo().code());
         assertEquals("AI runtime execution failed", result.failureInfo().cause());
         assertEquals(5, result.metrics().usage());
         assertEquals(Map.of(), result.statePatch().updates());
@@ -58,11 +59,11 @@ class AiNodeTest {
 
     @Test
     void missingSelectedStateFailsBeforeInvokingTheRuntime() {
-        AiRequest expected = request("local", 0, "Create a plan", Map.of("goal", "ship"));
+        AiRequest expected = request("test-run", 0, "Create a plan", Map.of("goal", "ship"));
         FakeAiRuntime runtime = runtime(expected, AiRuntimeResult.success("unused", 99));
         AiNode node = node(runtime, List.of("goal", "project"));
 
-        NodeResult result = node.execute(new NodeContext(Map.of("goal", "ship"), 0));
+        NodeResult result = node.execute(new NodeContext(Map.of("goal", "ship"), 0, "test-run"));
 
         assertEquals(Outcome.FAILURE, result.outcome());
         assertEquals("ai-input", result.failureInfo().type());
@@ -73,18 +74,34 @@ class AiNodeTest {
     @Test
     void graphRunsThroughTheFakeRuntimeWithoutAiOrNetwork() {
         GraphDefinition graph = graph(runtime(
-                request("local", 0, "Create a plan", Map.of("goal", "ship")),
+                request("test-run", 0, "Create a plan", Map.of("goal", "ship")),
                 AiRuntimeResult.success("verified plan", 8)));
         GraphRunner runner = new GraphRunner(new GraphValidator());
 
-        RunState first = runner.run(graph, Map.of("goal", "ship"));
-        RunState second = runner.run(graph, Map.of("goal", "ship"));
+        RunState first = runner.run(graph, Map.of("goal", "ship"), "test-run");
+        RunState second = runner.run(graph, Map.of("goal", "ship"), "test-run");
 
         assertEquals(first, second);
         assertEquals(RunStatus.COMPLETED, first.status());
         assertEquals(List.of(PLAN, END), first.path());
         assertEquals("verified plan", first.values().get("ai.plan.output"));
         assertEquals(8, first.events().getFirst().metrics().usage());
+    }
+
+    @Test
+    void defaultGraphScopeCannotInvokeAnAiRuntime() {
+        FakeAiRuntime runtime = runtime(
+                request("local", 0, "Create a plan", Map.of("goal", "ship")),
+                AiRuntimeResult.success("must not be used", 99));
+        GraphDefinition graph = graph(runtime);
+
+        RunState result = new GraphRunner(new GraphValidator()).run(
+                graph,
+                Map.of("goal", "ship"));
+
+        assertEquals(Outcome.FAILURE, result.events().getFirst().outcome());
+        assertEquals("missing-run-scope", result.events().getFirst().failure().code());
+        assertEquals(0, result.events().getFirst().metrics().usage());
     }
 
     @Test
@@ -110,7 +127,7 @@ class AiNodeTest {
     @Test
     void nodeFingerprintCoversRuntimeInstructionKeysAndOutputKey() {
         AiRequest expected = request(
-                "local", 0, "Create a plan", Map.of("a", "1", "bc", "2"));
+                "test-run", 0, "Create a plan", Map.of("a", "1", "bc", "2"));
         FakeAiRuntime firstRuntime = runtime(expected, AiRuntimeResult.success("one", 1));
         FakeAiRuntime changedRuntime = runtime(expected, AiRuntimeResult.success("two", 1));
         AiNode first = new AiNode(PLAN, firstRuntime, "Create a plan", List.of("a", "bc"), "output");

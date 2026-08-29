@@ -17,7 +17,7 @@ class FakeAiRuntimeTest {
         FakeAiRuntime runtime = new FakeAiRuntime(List.of(
                 new FakeAiExchange(first, AiRuntimeResult.success("draft", 11)),
                 new FakeAiExchange(second, AiRuntimeResult.failure(
-                        "review.rejected", AiFailureReason.EXECUTION_FAILED, 7))));
+                        AiFailureCode.EXECUTION_FAILED, 7))));
 
         AiRuntimeResult success = runtime.invoke(first);
         AiRuntimeResult failure = runtime.invoke(second);
@@ -26,7 +26,7 @@ class FakeAiRuntimeTest {
         assertEquals("draft", success.output());
         assertEquals(11, success.usage());
         assertEquals(AiRuntimeStatus.FAILURE, failure.status());
-        assertEquals("review.rejected", failure.failure().code());
+        assertEquals(AiFailureCode.EXECUTION_FAILED, failure.failure().code());
         assertEquals(7, failure.usage());
     }
 
@@ -39,7 +39,7 @@ class FakeAiRuntimeTest {
         AiRuntimeResult retried = runtime.invoke(expected);
 
         assertEquals(AiRuntimeStatus.FAILURE, mismatch.status());
-        assertEquals("fake.request-mismatch", mismatch.failure().code());
+        assertEquals(AiFailureCode.SCRIPT_MISMATCH, mismatch.failure().code());
         assertEquals(0, mismatch.usage());
         assertEquals(AiRuntimeStatus.SUCCESS, retried.status());
     }
@@ -56,7 +56,7 @@ class FakeAiRuntimeTest {
 
         assertEquals(first, replayed);
         assertEquals(firstExhausted, repeatedExhausted);
-        assertEquals("fake.script-exhausted", firstExhausted.failure().code());
+        assertEquals(AiFailureCode.SCRIPT_EXHAUSTED, firstExhausted.failure().code());
     }
 
     @Test
@@ -113,15 +113,14 @@ class FakeAiRuntimeTest {
         assertThrows(IllegalArgumentException.class, () -> new AiRuntimeResult(
                 AiRuntimeStatus.SUCCESS,
                 "done",
-                new AiRuntimeFailure("bad", AiFailureReason.UNKNOWN),
+                new AiRuntimeFailure(AiFailureCode.UNKNOWN),
                 0));
         assertThrows(IllegalArgumentException.class, () -> new AiRuntimeResult(
                 AiRuntimeStatus.FAILURE,
                 "unexpected output",
-                new AiRuntimeFailure("bad", AiFailureReason.UNKNOWN),
+                new AiRuntimeFailure(AiFailureCode.UNKNOWN),
                 0));
-        assertThrows(IllegalArgumentException.class, () -> new AiRuntimeFailure(
-                "Bearer secret-token", AiFailureReason.UNKNOWN));
+        assertThrows(NullPointerException.class, () -> new AiRuntimeFailure(null));
         AiRequest duplicate = request("duplicate", "plan", Map.of());
         assertThrows(IllegalArgumentException.class, () -> new FakeAiRuntime(List.of(
                 new FakeAiExchange(duplicate, AiRuntimeResult.success("one", 1)),

@@ -36,14 +36,12 @@ public final class FakeAiRuntime implements AiRuntime {
         FakeAiExchange exchange = exchangesByInvocation.get(request.invocationId());
         if (exchange == null) {
             return AiRuntimeResult.failure(
-                    "fake.script-exhausted",
-                    AiFailureReason.SCRIPT_EXHAUSTED,
+                    AiFailureCode.SCRIPT_EXHAUSTED,
                     0);
         }
         if (!exchange.expectedRequest().equals(request)) {
             return AiRuntimeResult.failure(
-                    "fake.request-mismatch",
-                    AiFailureReason.SCRIPT_MISMATCH,
+                    AiFailureCode.SCRIPT_MISMATCH,
                     0);
         }
         return exchange.result();

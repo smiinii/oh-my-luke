@@ -29,11 +29,11 @@ public record AiRuntimeResult(
         return new AiRuntimeResult(AiRuntimeStatus.SUCCESS, output, null, usage);
     }
 
-    public static AiRuntimeResult failure(String code, AiFailureReason reason, long usage) {
+    public static AiRuntimeResult failure(AiFailureCode code, long usage) {
         return new AiRuntimeResult(
                 AiRuntimeStatus.FAILURE,
                 "",
-                new AiRuntimeFailure(code, reason),
+                new AiRuntimeFailure(code),
                 usage);
     }
 }
