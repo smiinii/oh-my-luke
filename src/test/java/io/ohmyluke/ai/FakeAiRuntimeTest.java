@@ -11,12 +11,13 @@ import org.junit.jupiter.api.Test;
 
 class FakeAiRuntimeTest {
     @Test
-    void returnsScriptedSuccessAndFailureInExactOrder() {
+    void returnsScriptedSuccessAndFailureByLogicalInvocation() {
         AiRequest first = request("plan:0", "plan", Map.of("goal", "ship"));
         AiRequest second = request("review:1", "review", Map.of("draft", "ready"));
         FakeAiRuntime runtime = new FakeAiRuntime(List.of(
                 new FakeAiExchange(first, AiRuntimeResult.success("draft", 11)),
-                new FakeAiExchange(second, AiRuntimeResult.failure("review.rejected", "tests failed", 7))));
+                new FakeAiExchange(second, AiRuntimeResult.failure(
+                        "review.rejected", AiFailureReason.EXECUTION_FAILED, 7))));
 
         AiRuntimeResult success = runtime.invoke(first);
         AiRuntimeResult failure = runtime.invoke(second);
@@ -27,7 +28,6 @@ class FakeAiRuntimeTest {
         assertEquals(AiRuntimeStatus.FAILURE, failure.status());
         assertEquals("review.rejected", failure.failure().code());
         assertEquals(7, failure.usage());
-        assertEquals(2, runtime.consumedResponses());
     }
 
     @Test
@@ -42,21 +42,21 @@ class FakeAiRuntimeTest {
         assertEquals("fake.request-mismatch", mismatch.failure().code());
         assertEquals(0, mismatch.usage());
         assertEquals(AiRuntimeStatus.SUCCESS, retried.status());
-        assertEquals(1, runtime.consumedResponses());
     }
 
     @Test
-    void reportsExhaustionWithoutChangingTheScript() {
+    void replaysTheSameLogicalInvocationAndReportsUnknownInvocationAsExhausted() {
         AiRequest request = request("plan:0", "plan", Map.of());
         FakeAiRuntime runtime = runtime(request, AiRuntimeResult.success("done", 2));
-        runtime.invoke(request);
 
-        AiRuntimeResult firstExhausted = runtime.invoke(request);
-        AiRuntimeResult repeatedExhausted = runtime.invoke(request);
+        AiRuntimeResult first = runtime.invoke(request);
+        AiRuntimeResult replayed = runtime.invoke(request);
+        AiRuntimeResult firstExhausted = runtime.invoke(request("plan:1", "plan", Map.of()));
+        AiRuntimeResult repeatedExhausted = runtime.invoke(request("plan:1", "plan", Map.of()));
 
+        assertEquals(first, replayed);
         assertEquals(firstExhausted, repeatedExhausted);
         assertEquals("fake.script-exhausted", firstExhausted.failure().code());
-        assertEquals(1, runtime.consumedResponses());
     }
 
     @Test
@@ -75,7 +75,7 @@ class FakeAiRuntimeTest {
     @Test
     void fingerprintsDistinguishOrderRequestsResultsAndAmbiguousText() {
         AiRequest one = request("call:0", "a", Map.of("b", "c"));
-        AiRequest two = request("call:0", "ab", Map.of("c", ""));
+        AiRequest two = request("call:1", "ab", Map.of("c", ""));
         FakeAiRuntime first = new FakeAiRuntime(List.of(
                 new FakeAiExchange(one, AiRuntimeResult.success("x", 1)),
                 new FakeAiExchange(two, AiRuntimeResult.success("y", 2))));
@@ -86,11 +86,24 @@ class FakeAiRuntimeTest {
                 new FakeAiExchange(one, AiRuntimeResult.success("different", 1)),
                 new FakeAiExchange(two, AiRuntimeResult.success("y", 2))));
 
-        assertNotEquals(first.fingerprint(), reordered.fingerprint());
+        assertEquals(first.fingerprint(), reordered.fingerprint());
         assertNotEquals(first.fingerprint(), changedOutput.fingerprint());
         assertEquals(first.fingerprint(), new FakeAiRuntime(List.of(
                 new FakeAiExchange(one, AiRuntimeResult.success("x", 1)),
                 new FakeAiExchange(two, AiRuntimeResult.success("y", 2)))).fingerprint());
+    }
+
+    @Test
+    void aRecreatedRuntimeCanReplayALaterPersistedInvocation() {
+        AiRequest first = request("plan:0", "plan", Map.of("attempt", "one"));
+        AiRequest later = request("plan:2", "plan", Map.of("attempt", "two"));
+        List<FakeAiExchange> script = List.of(
+                new FakeAiExchange(first, AiRuntimeResult.success("first", 1)),
+                new FakeAiExchange(later, AiRuntimeResult.success("later", 2)));
+
+        AiRuntimeResult resumed = new FakeAiRuntime(script).invoke(later);
+
+        assertEquals(AiRuntimeResult.success("later", 2), resumed);
     }
 
     @Test
@@ -100,13 +113,19 @@ class FakeAiRuntimeTest {
         assertThrows(IllegalArgumentException.class, () -> new AiRuntimeResult(
                 AiRuntimeStatus.SUCCESS,
                 "done",
-                new AiRuntimeFailure("bad", "bad"),
+                new AiRuntimeFailure("bad", AiFailureReason.UNKNOWN),
                 0));
         assertThrows(IllegalArgumentException.class, () -> new AiRuntimeResult(
                 AiRuntimeStatus.FAILURE,
                 "unexpected output",
-                new AiRuntimeFailure("bad", "bad"),
+                new AiRuntimeFailure("bad", AiFailureReason.UNKNOWN),
                 0));
+        assertThrows(IllegalArgumentException.class, () -> new AiRuntimeFailure(
+                "Bearer secret-token", AiFailureReason.UNKNOWN));
+        AiRequest duplicate = request("duplicate", "plan", Map.of());
+        assertThrows(IllegalArgumentException.class, () -> new FakeAiRuntime(List.of(
+                new FakeAiExchange(duplicate, AiRuntimeResult.success("one", 1)),
+                new FakeAiExchange(duplicate, AiRuntimeResult.success("two", 1)))));
     }
 
     private static FakeAiRuntime runtime(AiRequest request, AiRuntimeResult result) {

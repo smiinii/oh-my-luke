@@ -67,7 +67,7 @@ public final class AiNode implements Node {
         }
 
         AiRequest request = new AiRequest(
-                id.value() + ":" + context.executedSteps(),
+                AiInvocationId.forNode(context.runId(), id, context.executedSteps()),
                 instruction,
                 selected);
         AiRuntimeResult result = Objects.requireNonNull(
@@ -79,7 +79,7 @@ public final class AiNode implements Node {
         }
         return NodeResult.failure(
                 StatePatch.empty(),
-                new FailureInfo("ai-runtime", result.failure().code(), result.failure().cause()),
+                new FailureInfo("ai-runtime", result.failure().code(), result.failure().publicCause()),
                 metrics);
     }
 

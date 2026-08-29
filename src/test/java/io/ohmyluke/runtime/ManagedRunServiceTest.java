@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ohmyluke.ai.AiNode;
+import io.ohmyluke.ai.AiInvocationId;
 import io.ohmyluke.ai.AiRequest;
 import io.ohmyluke.ai.AiRuntimeResult;
 import io.ohmyluke.ai.FakeAiExchange;
@@ -154,7 +155,10 @@ class ManagedRunServiceTest {
         PolicyConfiguration configuration = new PolicyConfiguration(0, 0, 0, 0, 7, 0, 0);
         ManagedRunService service = service(configuration);
         FakeAiRuntime runtime = new FakeAiRuntime(List.of(new FakeAiExchange(
-                new AiRequest("work:0", "Answer the request", Map.of("request", "same")),
+                new AiRequest(
+                        AiInvocationId.forNode("fake-ai-usage", WORK, 0),
+                        "Answer the request",
+                        Map.of("request", "same")),
                 AiRuntimeResult.success("done", 7))));
         AiNode node = new AiNode(
                 WORK,

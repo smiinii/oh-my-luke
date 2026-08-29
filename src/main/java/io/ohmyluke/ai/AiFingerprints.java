@@ -13,7 +13,10 @@ final class AiFingerprints {
     static String fakeRuntime(List<FakeAiExchange> exchanges) {
         StringBuilder encoded = new StringBuilder();
         append(encoded, Integer.toString(exchanges.size()));
-        for (FakeAiExchange exchange : exchanges) {
+        for (FakeAiExchange exchange : exchanges.stream()
+                .sorted(java.util.Comparator.comparing(
+                        item -> item.expectedRequest().invocationId()))
+                .toList()) {
             appendRequest(encoded, exchange.expectedRequest());
             appendResult(encoded, exchange.result());
         }
@@ -31,6 +34,14 @@ final class AiFingerprints {
         append(encoded, Integer.toString(inputStateKeys.size()));
         inputStateKeys.forEach(value -> append(encoded, value));
         append(encoded, outputStateKey);
+        return sha256(encoded.toString());
+    }
+
+    static String invocation(String runId, String nodeId, int executedSteps) {
+        StringBuilder encoded = new StringBuilder();
+        append(encoded, runId);
+        append(encoded, nodeId);
+        append(encoded, Integer.toString(executedSteps));
         return sha256(encoded.toString());
     }
 
@@ -52,7 +63,7 @@ final class AiFingerprints {
             append(target, "none");
         } else {
             append(target, result.failure().code());
-            append(target, result.failure().cause());
+            append(target, result.failure().reason().name());
         }
     }
 

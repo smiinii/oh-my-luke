@@ -1,17 +1,28 @@
 package io.ohmyluke.ai;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /** In-memory strict script used to test AI flows without a model, process, or network. */
 public final class FakeAiRuntime implements AiRuntime {
-    private final List<FakeAiExchange> exchanges;
+    private final Map<String, FakeAiExchange> exchangesByInvocation;
     private final String fingerprint;
-    private int cursor;
 
     public FakeAiRuntime(List<FakeAiExchange> exchanges) {
-        this.exchanges = List.copyOf(Objects.requireNonNull(exchanges, "exchanges"));
-        this.fingerprint = "fake-ai:v1:sha256:" + AiFingerprints.fakeRuntime(this.exchanges);
+        List<FakeAiExchange> copy = List.copyOf(Objects.requireNonNull(exchanges, "exchanges"));
+        try {
+            this.exchangesByInvocation = copy.stream().collect(Collectors.toUnmodifiableMap(
+                    exchange -> exchange.expectedRequest().invocationId(),
+                    Function.identity()));
+        } catch (IllegalStateException duplicate) {
+            throw new IllegalArgumentException(
+                    "exchanges must have unique invocation ids",
+                    duplicate);
+        }
+        this.fingerprint = "fake-ai:v2:sha256:" + AiFingerprints.fakeRuntime(copy);
     }
 
     @Override
@@ -20,26 +31,21 @@ public final class FakeAiRuntime implements AiRuntime {
     }
 
     @Override
-    public synchronized AiRuntimeResult invoke(AiRequest request) {
+    public AiRuntimeResult invoke(AiRequest request) {
         Objects.requireNonNull(request, "request");
-        if (cursor >= exchanges.size()) {
+        FakeAiExchange exchange = exchangesByInvocation.get(request.invocationId());
+        if (exchange == null) {
             return AiRuntimeResult.failure(
                     "fake.script-exhausted",
-                    "no scripted response remains",
+                    AiFailureReason.SCRIPT_EXHAUSTED,
                     0);
         }
-        FakeAiExchange next = exchanges.get(cursor);
-        if (!next.expectedRequest().equals(request)) {
+        if (!exchange.expectedRequest().equals(request)) {
             return AiRuntimeResult.failure(
                     "fake.request-mismatch",
-                    "request did not match scripted exchange " + cursor,
+                    AiFailureReason.SCRIPT_MISMATCH,
                     0);
         }
-        cursor++;
-        return next.result();
-    }
-
-    public synchronized int consumedResponses() {
-        return cursor;
+        return exchange.result();
     }
 }

@@ -1,19 +1,21 @@
 package io.ohmyluke.ai;
 
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /** Stable, non-secret failure identity returned by an AI runtime adapter. */
-public record AiRuntimeFailure(String code, String cause) {
+public record AiRuntimeFailure(String code, AiFailureReason reason) {
+    private static final Pattern SAFE_CODE = Pattern.compile("[a-z0-9][a-z0-9._-]{0,63}");
+
     public AiRuntimeFailure {
-        code = requireText(code, "code");
-        cause = requireText(cause, "cause");
+        Objects.requireNonNull(code, "code");
+        if (!SAFE_CODE.matcher(code).matches()) {
+            throw new IllegalArgumentException("code must be a stable safe identifier");
+        }
+        Objects.requireNonNull(reason, "reason");
     }
 
-    private static String requireText(String value, String name) {
-        Objects.requireNonNull(value, name);
-        if (value.isBlank()) {
-            throw new IllegalArgumentException(name + " must not be blank");
-        }
-        return value;
+    public String publicCause() {
+        return reason.publicMessage();
     }
 }
