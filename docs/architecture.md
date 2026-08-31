@@ -4,12 +4,12 @@
 
 ## 전체 구조
 
-하네스는 작업표·컨텍스트·도구·권한·검증·기록을 함께 제공하는 실행 환경이다. Direct와 Loop는 그 환경을 사용하는 **하나의 그래프 커널 위의 프리셋**이며, 별도 엔진이 아니다.
+하네스는 작업표·컨텍스트·도구·권한·검증·기록을 함께 제공하는 실행 환경이다. Direct·Loop·Workflow는 그 환경을 사용하는 **하나의 그래프 커널 위의 프리셋**이며, 별도 엔진이 아니다.
 
 ```text
 CLI: 작업표·모델·실행 ID
  ↓
-PresetRunService: Direct / Loop 그래프 구성
+PresetRunService / WorkflowRunService: 고정 그래프 구성
  ↓
 ManagedRunService ←→ Policy / Checkpoint / Events / Handoff
  ↓
@@ -19,7 +19,7 @@ GraphRunner → Node
                └── Java 검증
 ```
 
-정적 Workflow는 같은 커널 위에 추가할 후속 프리셋이다. `ProjectScanner`는 별도 Java API로 프로젝트 지도를 제공하며, 현재 `run`이 스캐너로 컨텍스트나 실행 모드를 자동 선택하는 것은 아니다.
+정적 Workflow는 검사·수정·승인을 같은 커널에 연결하며, 선택한 경로의 순차 합류만 지원한다. `ProjectScanner`는 별도 Java API로 프로젝트 지도를 제공하며, 현재 CLI가 스캐너로 컨텍스트나 실행 모드를 자동 선택하는 것은 아니다.
 
 ## 구성요소의 책임
 
@@ -27,8 +27,9 @@ GraphRunner → Node
 | --- | --- | --- |
 | CLI | 작업표·모델 입력, 실행·검사·재개 명령 | AI가 권한·한도를 바꾸게 허용 |
 | PresetRunService | 고정 작업표로 그래프 구성·복원 | 별도 실행 엔진, 자동 모드 선택 |
+| WorkflowRunService | 선언 검증, 프리셋 노드 펼치기, 조건·승인 연결 | 중첩 실행기, 동적/병렬 그래프 |
 | GraphRunner | 노드 실행, 상태 변경 적용, 조건에 맞는 이동 | 파일 저장, 인증, AI 제공자 선택 |
-| ManagedRunService | 노드별 체크포인트·이벤트·잠금·정책 조정 | 외부 부작용의 무조건적인 exactly-once |
+| ManagedRunService | 체크포인트·이벤트·잠금·정책·영속 승인 조정 | 외부 부작용의 무조건적인 exactly-once |
 | 정책·검증 | 실제 사실로 완료·한도·권한 판정 | AI의 성공 선언만 신뢰 |
 | AiRuntime | 선택한 입력으로 AI 실행·결과·사용량 반환 | 직접 그래프 상태나 OML 정책 변경 |
 | 도구 | 권한 확인 뒤 파일·격리 프로세스 실행 | 샌드박스 우회, 무제한 외부 접근 |
@@ -58,9 +59,10 @@ GraphRunner → Node
 위 그림은 개념 흐름이다. 준비·적용의 충돌은 즉시 차단하며, writer/검증 실패도 원인에 따라 재시도하지 않는다.
 
 - Direct는 OML AI 호출 한 번과 적용·검증이다. Loop는 재시도 가능한 실패만 한도 안에서 반복한다.
-- 현재 범위는 기존 UTF-8 파일 하나, 64 KiB 이하다. 자동 롤백이나 다중 파일 트랜잭션은 제공하지 않는다.
+- 수정 단계마다 기존 UTF-8 파일 하나, 64 KiB 이하다. 자동 롤백이나 다중 파일 트랜잭션은 제공하지 않는다.
 - AI 제안은 엄격한 `{path, content}` JSON이다. 파일 스냅샷과 제안은 아티팩트에, 상태에는 해시·호출 수·짧은 실패를 남긴다.
 - 사용법과 내부 연결 계약은 [프리셋 사용법](preset-usage.md), 쉽게 읽는 설명은 [마일스톤 8](how-it-works/08-direct-and-loop.md)에 있다.
+- Workflow는 선검사 통과 시 수정 단계를 건너뛰고, 지정한 승인 지점에서 저장 후 멈춘다. 장단점·분기·재개 규칙은 [Workflow 사용법](workflow-usage.md)에 있다.
 
 ## 상세 문서 선택
 
@@ -72,6 +74,7 @@ GraphRunner → Node
 | 권한·파일 체크포인트·OS 샌드박스·신뢰 경계 | [보안](security.md) |
 | AI 요청 계약·가짜 실행기·Codex·인증·토큰 | [실행기와 인증](runtime-auth.md) |
 | 작업표·실행 명령·Direct/Loop 연결·운영 제한 | [프리셋 사용법](preset-usage.md) |
+| 선언형 Workflow·승인·설계 장단점 | [Workflow 사용법](workflow-usage.md) |
 | 스캐너의 탐색·제외·명령 후보·한도 | [프로젝트 스캐너](how-it-works/05-project-scanner.md) |
 | 코드를 읽지 않고 이해하는 진행 과정 | [마일스톤별 설명](how-it-works/README.md) |
 | 제품 범위·배포 방향 | [제품](product.md) |
@@ -82,6 +85,7 @@ GraphRunner → Node
 
 - 마일스톤 1~7: 커널 → 상태·재개 → 정책 → 도구 → 스캐너 → 가짜 AI → Codex CLI 순으로 구현했다.
 - 마일스톤 8: 단일 파일 Direct·Loop와 사용자 실행·재개 명령을 연결했다.
-- 다음 단계는 정적 Workflow와 비교 실험이다. 자동 모드 선택과 공개 배포는 아직 남아 있으며 토큰 절감 효과는 측정 전이다.
+- 마일스톤 9: 정적 Workflow의 조건 분기·순차 합류·사람 승인과 재개를 연결했다.
+- 비교 실험·자동 컨텍스트·모드 선택·사용성 확장·공개 배포는 남아 있으며 토큰 절감 효과는 측정 전이다.
 
 이 문서는 약 100줄의 안내 지도로 유지한다. 새 마일스톤의 상세 설명을 계속 덧붙이지 않고 해당 주제 문서와 마일스톤 문서를 갱신한다. 길이를 맞추기 위해 근거를 삭제하거나 여러 문장을 한 줄로 숨기지 않는다.

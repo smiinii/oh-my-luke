@@ -148,6 +148,19 @@ final class PresetGraph {
     private NodeResult validate(NodeContext context) {
         FileToolResult read = read(context, "validate-before");
         if (!matchesProposal(context, read)) { return blocked("validation-file-conflict", 1); }
+        return validateRead(context, read);
+    }
+
+    /** Same objective validator, without requiring an AI proposal or modifying the file. */
+    NodeResult check(NodeContext context) {
+        FileToolResult read = read(context, "check-before");
+        if (!read.executed()) { return blocked("file-read-blocked", 1); }
+        Map<String, String> values = new LinkedHashMap<>(context.values());
+        values.put(PREFIX + "proposalHash", PresetContentStore.hash(read.content()));
+        return validateRead(new NodeContext(values, context.executedSteps(), context.runId()), read);
+    }
+
+    private NodeResult validateRead(NodeContext context, FileToolResult read) {
         String text = PresetContentStore.text(read.content());
         List<String> failures = new ArrayList<>();
         ValidationSpec validation = task.validation();

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "goal": "Confirm the local file is ready after operator consent",
+  "start": "review",
+  "maxSteps": 10,
+  "maxUsage": 0,
+  "maxElapsedMillis": 3600000,
+  "steps": [
+    {
+      "id": "review",
+      "type": "APPROVAL",
+      "prompt": "Continue to the local readiness check?",
+      "onSuccess": "verify",
+      "onFailure": "stopped"
+    },
+    {
+      "id": "verify",
+      "type": "CHECK",
+      "file": "hello.txt",
+      "validation": {"requiredText": ["OML_READY"], "forbiddenText": []},
+      "onSuccess": "succeeded",
+      "onFailure": "stopped"
+    }
+  ]
+}

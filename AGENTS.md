@@ -21,6 +21,7 @@ Core constraints:
 - Treat Codex CLI as the first BYOR adapter, not as the core architecture.
 - Keep public distribution self-contained: GitHub Releases first, then Homebrew and WinGet; do not require user-installed Java or Node.js and do not add npm distribution without revisiting the product decision.
 - Do not add Spring Boot, a database, a GUI, dynamic graphs, or parallel AI execution to the MVP.
+- Follow [the product scope](docs/product.md) for deferring OML-managed sub-agent orchestration and skill loading beyond the MVP; this does not restrict agents or skills used to develop and review OML.
 - Never claim token savings without reproducible benchmark evidence.
 - Keep Baseline and OML benchmark arms mutually isolated while giving both the same external capabilities.
 - After completing a milestone, add a concise numbered Markdown file under `docs/how-it-works/` and link it from `docs/how-it-works/README.md`. Explain the flow, purpose, verification evidence, and current limitations for non-programmers. Do not turn it into a class-by-class code reference.

@@ -13,8 +13,9 @@ public record RunCheckpoint(
         CheckpointPhase phase,
         RunState state,
         PolicyConfiguration policyConfiguration,
-        PolicyState policyState) {
-    public static final int CURRENT_SCHEMA_VERSION = 2;
+        PolicyState policyState,
+        ApprovalState approval) {
+    public static final int CURRENT_SCHEMA_VERSION = 3;
 
     public RunCheckpoint {
         if (schemaVersion < 1) {
@@ -26,6 +27,14 @@ public record RunCheckpoint(
         Objects.requireNonNull(state, "state");
         Objects.requireNonNull(policyConfiguration, "policyConfiguration");
         Objects.requireNonNull(policyState, "policyState");
+        if (approval != null && !approval.node().equals(state.currentNode())) {
+            throw new IllegalArgumentException("approval must belong to the current node");
+        }
+    }
+
+    public RunCheckpoint(int schemaVersion, String runId, String graphSignature, CheckpointPhase phase,
+                         RunState state, PolicyConfiguration policyConfiguration, PolicyState policyState) {
+        this(schemaVersion, runId, graphSignature, phase, state, policyConfiguration, policyState, null);
     }
 
     public static RunCheckpoint current(
@@ -49,6 +58,12 @@ public record RunCheckpoint(
             RunState state,
             PolicyConfiguration policyConfiguration,
             PolicyState policyState) {
+        return current(runId, graphSignature, phase, state, policyConfiguration, policyState, null);
+    }
+
+    public static RunCheckpoint current(String runId, String graphSignature, CheckpointPhase phase,
+                                        RunState state, PolicyConfiguration policyConfiguration,
+                                        PolicyState policyState, ApprovalState approval) {
         return new RunCheckpoint(
                 CURRENT_SCHEMA_VERSION,
                 runId,
@@ -56,7 +71,8 @@ public record RunCheckpoint(
                 phase,
                 state,
                 policyConfiguration,
-                policyState);
+                policyState,
+                approval);
     }
 
     private static String requireText(String value, String name) {
