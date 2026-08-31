@@ -6,7 +6,7 @@ Oh My Luke(OML)는 사용자가 이미 로그인한 AI CLI를 활용해 개발 �
 
 ## 현재 상태
 
-프로젝트 초기 단계입니다. AI 없이 동작하는 그래프 커널, 로컬 상태 저장·재개, 객관적 완료·안전 중단 정책, 기억되는 권한, 범용 파일·프로세스 도구, 프로젝트 스캐너, 가짜 AI 실행기와 첫 실제 BYOR 어댑터인 Codex CLI 실행기를 구현했습니다.
+프로젝트 개발 단계입니다. 그래프 커널, 상태 저장·재개, 완료·안전 중단 정책, 권한, 파일·프로세스 도구, 프로젝트 스캐너와 Codex CLI 실행기를 구현했습니다. 이제 작은 파일 하나를 Direct·Loop 프리셋으로 수정하고 검증하는 첫 사용자 실행 흐름도 제공합니다.
 
 ```text
 A → 검사
@@ -33,7 +33,7 @@ A → 검사
 - `FakeAiRuntime`은 실제 AI·네트워크·외부 프로세스 없이 예상 요청과 응답을 재생해 AI 그래프와 사용량 제한을 테스트합니다.
 - `CodexCliRuntime`은 사용자가 `codex login`으로 저장한 로그인을 공식 CLI를 통해 재사용합니다. 기본 모델·추론 강도는 사용자 Codex 설정을 상속하고, Java API에서 명시한 경우에만 실행별로 재정의합니다.
 - 실제 호출은 민감 파일과 OML 내부 파일을 제외한 임시 프로젝트 사본을 기본 작업공간으로 삼고 Codex 셸 샌드박스를 `read-only`로 고정합니다. JSONL 최종 응답·세션 ID·토큰 사용량을 파싱하고 논리 호출 결과를 `.oml/runtime/codex/invocations/`에 원자적으로 저장합니다.
-- 사용자용 `omluke run --model ...` 명령과 원본 프로젝트 변경은 아직 연결하지 않았습니다. 다음 Direct·Loop 프리셋 단계에서 실행 흐름을 CLI에 공개합니다.
+- `omluke run <task.json> [--model ...] [--reasoning ...]`으로 기존 UTF-8 파일 하나(64 KiB 이하)를 수정·검증합니다. Direct는 OML AI 호출 한 번, Loop는 검증 실패 시 제한된 재시도입니다. [개발용 실행 예시와 제한](docs/preset-usage.md)을 먼저 확인하세요.
 
 ## 기술 기준
 
@@ -80,7 +80,7 @@ Windows:
 ./gradlew run --args="permissions reset"
 ```
 
-`inspect`와 `cancel`은 저장 파일만으로 동작합니다. `resume`은 실행 가능한 노드 코드를 다시 연결해야 하므로 현재는 Java API의 `GraphResolver`를 통해 그래프가 등록된 환경에서 동작합니다. 독립 실행형 CLI의 그래프 로딩은 이후 프리셋 단계에서 연결합니다.
+`inspect`와 `cancel`은 저장 파일만으로 동작합니다. Direct·Loop는 저장된 작업표로 독립 CLI에서 재개할 수 있습니다. 임의의 Java 그래프는 `GraphResolver` 등록이 필요합니다. 프리셋의 성공은 `result=SUCCEEDED`로 확인하며, 내부 `status=COMPLETED`만으로 성공을 판단하지 않습니다.
 
 ## 배포 계획
 

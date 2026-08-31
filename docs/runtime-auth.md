@@ -73,7 +73,7 @@ codex exec --json --ephemeral
 - 명시적 모델은 `--model <사용자 입력>`으로 전달한다.
 - 명시적 추론 강도는 `--config model_reasoning_effort="..."`로 전달한다.
 - OML은 빠르게 바뀌는 모델 목록을 자체 허용 목록으로 복제하지 않는다. 실제 사용 가능 여부는 사용자의 CLI와 계정이 판정한다.
-- 현재 선택 API는 Java 런타임 설정에 있다. 사용자용 `omluke run --model` 표면은 프리셋 단계에서 연결한다.
+- Java 런타임 설정과 `omluke run <task.json> --model <모델> --reasoning <강도>`에서 선택한다. CLI 선택 → 작업표 선택 → Codex 설정 순이며, 실행 시작 시 작업표에 저장한 선택으로 재개한다.
 
 ## 실행 결과와 사용량
 
