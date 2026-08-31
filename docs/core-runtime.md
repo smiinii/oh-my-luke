@@ -42,7 +42,7 @@ READY 체크포인트
 
 - `state.json`은 스키마 버전과 그래프 구조·노드 동작 지문의 SHA-256 서명을 가진다.
 - 시작 시 고정한 정책 설정, 현재 카운터, 반복 실패·무진전 횟수와 마지막 정책 판정도 함께 저장한다.
-- 체크포인트 스키마 2는 기존 스키마 1을 제한 비활성화 상태로 읽어 올린다.
+- 체크포인트 스키마 3은 nullable `approval`을 저장한다. 스키마 1은 제한 비활성화 상태로, 스키마 2는 기존 정책을 유지하며 승인 없음으로 읽어 올린다.
 - 지원하지 않는 스키마는 백업으로 숨기지 않고 명시적으로 거부한다. 저장할 때도 현재 구현이 읽을 수 있는 버전만 허용한다.
 - 파일 내부 `runId`와 실행 디렉터리 ID가 다르면 상태 혼합으로 보고 거부한다.
 - 프로젝트 실제 경로를 기준으로 심볼릭 링크 탈출을 검사하고 임시 파일은 충돌 없는 새 파일로 생성한다.
@@ -55,6 +55,15 @@ READY 체크포인트
 - 취소 이벤트를 체크포인트보다 먼저 기록하므로 취소 상태 파일이 손상되어도 노드를 다시 실행하지 않는다.
 - 체크포인트 저장 뒤 완료 이벤트 기록 전에 종료되면 `inspect`는 체크포인트 전이 이력으로 완전한 읽기 뷰를 제공한다. 다음 변경 작업은 누락 이벤트를 영구 기록한다.
 - 실행 ID별 운영체제 파일 잠금으로 두 프로세스가 같은 노드를 동시에 실행하지 못하게 한다.
+
+## 영속 사람 승인
+
+- `ApprovalNode`는 고정 문구의 사람 판단 지점이다. 일반 노드 실행으로 동의를 만들 수 없으며 `GraphRunner.resolveApproval`이 명시적 참/거짓 결과만 전이한다.
+- 관리 런타임은 게이트에서 `READY + approval=PENDING`을 저장한다. 커널 상태는 `RUNNING`이며 Workflow 사용자 결과는 `WAITING_APPROVAL`이다. 승인 없이 `step/resume`을 반복해도 노드·시도 수가 늘지 않는다.
+- 요청 ID는 실행·그래프 서명·현재 노드·누적 단계·입력 상태 지문의 길이 접두어 SHA-256이다. 새 방문마다 다시 승인하고, 그래프/상태 변경·다른 실행·중복·상충 선택은 거부한다.
+- `decideApproval`은 실행 잠금 안에서 한도를 확인하고 결정 이벤트→체크포인트 순서로 저장한다. 후속 실행은 별도 `resume`이며 승인 여부가 다음 분기를 선택한다.
+- 대기 체크포인트 저장 후 요청 이벤트 누락은 검사/다음 변경에서 복원한다. 결정 후 체크포인트 저장 전 중단이나 백업 복구는 이벤트에서 결정을 복구한다. 취소는 결정보다 우선한다.
+- 경과 시간에는 승인 대기도 포함한다. 취소·한도 이후에는 승인으로 실행을 되살리지 않는다. Workflow 진행 동의는 도구 권한 부여가 아니다.
 
 ## 정책 판정과 카운터
 
@@ -92,11 +101,12 @@ FileToolNode / ProcessToolNode
 
 ## CLI 재개와 검증 근거
 
-독립 CLI는 저장된 `TaskSpec`으로 Direct·Loop 그래프를 재구성한다. 임의 Java 노드 그래프는 `GraphResolver` 등록이 필요하다. `inspect`와 `cancel`은 저장 파일만으로 동작하며, 사용 절차와 제한은 [프리셋 사용법](preset-usage.md)을 따른다.
+독립 CLI는 저장된 `TaskSpec` 또는 `WorkflowSpec`으로 같은 그래프를 재구성한다. 임의 Java 노드 그래프는 `GraphResolver` 등록이 필요하다. `inspect`와 `cancel`은 그래프 재구성이 필요 없으며, 사용 절차와 제한은 [프리셋](preset-usage.md)과 [Workflow 사용법](workflow-usage.md)을 따른다.
 
 - [그래프 테스트](../src/test/java/io/ohmyluke/graph/): 조건 선택·잘못된 그래프·단계 제한
 - [상태 저장 테스트](../src/test/java/io/ohmyluke/state/): 스키마·서명·원자적 저장·손상·로그·권한 저장
 - [관리 실행 테스트](../src/test/java/io/ohmyluke/runtime/ManagedRunServiceTest.java): 중단·재개·정책 연결
+- [승인 테스트](../src/test/java/io/ohmyluke/runtime/ManagedApprovalTest.java): 승인 대기·결정·손상 복구·별도 JVM 재시작
 - [정책 테스트](../src/test/java/io/ohmyluke/policy/): 완료·한도·반복 실패·권한 판정
 - [도구 테스트](../src/test/java/io/ohmyluke/tool/): 변경 복구·재실행·격리 경계
 - [프리셋 테스트](../src/test/java/io/ohmyluke/preset/): 사용자 결과·재개·시도 및 사용량 제한
