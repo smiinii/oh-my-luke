@@ -137,6 +137,21 @@ public final class GraphRunner {
         return stepInternal(prepared, state, runId);
     }
 
+    /** Resolves only a human gate; callers must persist and authenticate the operator decision. */
+    public RunState resolveApproval(PreparedGraph prepared, RunState state, String runId, boolean approved) {
+        Objects.requireNonNull(prepared, "prepared");
+        Objects.requireNonNull(state, "state");
+        requireRunId(runId);
+        if (state.status() != RunStatus.RUNNING
+                || !(prepared.nodesById.get(state.currentNode()) instanceof ApprovalNode)) {
+            throw new GraphExecutionException("current node is not a running approval gate");
+        }
+        if (prepared.graph.maxSteps() > 0 && state.executedSteps() >= prepared.graph.maxSteps()) {
+            throw new GraphExecutionException("approval cannot override the graph step limit");
+        }
+        return transition(prepared, state, approved ? NodeResult.success() : NodeResult.failure());
+    }
+
     private RunState stepInternal(PreparedGraph prepared, RunState state, String runId) {
         Objects.requireNonNull(prepared, "prepared");
         Objects.requireNonNull(state, "state");
@@ -162,6 +177,12 @@ public final class GraphRunner {
         }
 
         NodeResult result = execute(node, context(state.values(), state.executedSteps(), runId));
+        return transition(prepared, state, result);
+    }
+
+    private static RunState transition(PreparedGraph prepared, RunState state, NodeResult result) {
+        GraphDefinition graph = prepared.graph;
+        NodeId current = state.currentNode();
         Map<String, String> stateAfter = apply(state.values(), result.statePatch());
         Edge selected = selectSingleEdge(
                 current,

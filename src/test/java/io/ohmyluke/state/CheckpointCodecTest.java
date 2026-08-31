@@ -2,6 +2,7 @@ package io.ohmyluke.state;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.ohmyluke.graph.NodeId;
 import io.ohmyluke.graph.Outcome;
@@ -87,6 +88,35 @@ class CheckpointCodecTest {
         assertEquals(PolicyConfiguration.unlimited(), migrated.policyConfiguration());
         assertEquals(0, migrated.policyState().iterations());
         assertEquals("policy.not-evaluated", migrated.policyState().lastDecision().reasonCode());
+        assertNull(migrated.approval());
+    }
+
+    @Test
+    void migratesVersionTwoWithoutLosingPolicyOrFabricatingConsent() throws Exception {
+        NodeId node = new NodeId("work");
+        RunCheckpoint current = RunCheckpoint.current("legacy", "signature", CheckpointPhase.READY,
+                new RunState(RunStatus.RUNNING, node, 0, Map.of(), List.of(node), List.of()),
+                new PolicyConfiguration(5, 60000, 10, 2, 1000, 3, 3), PolicyState.initial(1234));
+        com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.node.ObjectNode legacy = (com.fasterxml.jackson.databind.node.ObjectNode)
+                json.readTree(codec.encode(current));
+        legacy.put("schemaVersion", 2);
+        legacy.remove("approval");
+        RunCheckpoint migrated = codec.decode(json.writeValueAsString(legacy));
+        assertEquals(current, migrated);
+        assertNull(migrated.approval());
+    }
+
+    @Test
+    void roundTripsPendingAndDecidedApprovalInCurrentSchema() {
+        NodeId node = new NodeId("gate");
+        for (ApprovalDecision decision : ApprovalDecision.values()) {
+            RunCheckpoint checkpoint = RunCheckpoint.current("approval", "signature", CheckpointPhase.READY,
+                    new RunState(RunStatus.RUNNING, node, 0, Map.of(), List.of(node), List.of()),
+                    PolicyConfiguration.unlimited(), PolicyState.initial(1),
+                    new ApprovalState("a".repeat(64), node, "계속 진행할까요?", decision));
+            assertEquals(checkpoint, codec.decode(codec.encode(checkpoint)));
+        }
     }
 
     @Test

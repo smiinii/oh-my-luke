@@ -43,9 +43,16 @@ public final class CheckpointCodec {
             int version = versionNode.intValue();
             if (version == 1) {
                 ObjectNode migrated = (ObjectNode) root.deepCopy();
-                migrated.put("schemaVersion", RunCheckpoint.CURRENT_SCHEMA_VERSION);
+                migrated.put("schemaVersion", 2);
                 migrated.set("policyConfiguration", mapper.valueToTree(PolicyConfiguration.unlimited()));
                 migrated.set("policyState", mapper.valueToTree(PolicyState.initial(0)));
+                root = migrated;
+                version = 2;
+            }
+            if (version == 2) {
+                ObjectNode migrated = (ObjectNode) root.deepCopy();
+                migrated.put("schemaVersion", RunCheckpoint.CURRENT_SCHEMA_VERSION);
+                migrated.putNull("approval");
                 root = migrated;
                 version = RunCheckpoint.CURRENT_SCHEMA_VERSION;
             }

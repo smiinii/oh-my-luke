@@ -28,6 +28,8 @@ import io.ohmyluke.state.RunCheckpoint;
 import io.ohmyluke.state.RunEvent;
 import io.ohmyluke.state.RunEventType;
 import io.ohmyluke.state.RunLockManager;
+import io.ohmyluke.state.ApprovalDecision;
+import io.ohmyluke.state.ApprovalState;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
@@ -108,6 +110,7 @@ public final class ManagedRunService {
             checkpoints.save(checkpoint);
             handoffs.save(runId, handoff);
             append(checkpoint, RunEventType.RUN_STARTED, "run initialized");
+            checkpoint = ensureApproval(checkpoint, graph);
             if (state.status() == RunStatus.COMPLETED) {
                 append(checkpoint, RunEventType.RUN_COMPLETED, "start node is terminal");
             }
@@ -120,7 +123,8 @@ public final class ManagedRunService {
             RunCheckpoint checkpoint = loadForAction(runId);
             verifyGraph(checkpoint, graph);
             checkpoint = enforcePreExecutionPolicy(checkpoint);
-            return advance(runner.prepare(graph), checkpoint).state();
+            checkpoint = ensureApproval(checkpoint, graph);
+            return ensureApproval(advance(runner.prepare(graph), checkpoint), graph).state();
         }
     }
 
@@ -129,6 +133,7 @@ public final class ManagedRunService {
             RunCheckpoint checkpoint = loadForAction(runId);
             verifyGraph(checkpoint, graph);
             checkpoint = enforcePreExecutionPolicy(checkpoint);
+            checkpoint = ensureApproval(checkpoint, graph);
             if (!canExecute(checkpoint)) {
                 return checkpoint.state();
             }
@@ -136,9 +141,31 @@ public final class ManagedRunService {
             append(checkpoint, RunEventType.RUN_RESUMED, resumeDetail(checkpoint));
             RunCheckpoint current = checkpoint;
             while (canExecute(current)) {
-                current = advance(prepared, current);
+                current = ensureApproval(advance(prepared, current), graph);
             }
             return current.state();
+        }
+    }
+
+    /** Records consent only. A separate resume executes the selected graph branch. */
+    public RunInspection decideApproval(String runId, GraphDefinition graph, String requestId, boolean approved) {
+        try (RunLockManager.RunLease ignored = locks.acquire(runId)) {
+            RunCheckpoint checkpoint = loadForAction(runId);
+            verifyGraph(checkpoint, graph);
+            checkpoint = enforcePreExecutionPolicy(checkpoint);
+            checkpoint = ensureApproval(checkpoint, graph);
+            if (!operationallyRunnable(checkpoint) || checkpoint.approval() == null
+                    || checkpoint.approval().decision() != ApprovalDecision.PENDING
+                    || !checkpoint.approval().requestId().equals(requestId)) {
+                throw new ManagedRunException("no matching pending approval is available");
+            }
+            ApprovalState selected = checkpoint.approval().withDecision(
+                    approved ? ApprovalDecision.APPROVED : ApprovalDecision.DENIED);
+            RunCheckpoint decided = ApprovalSupport.withApproval(checkpoint, selected);
+            // Like cancellation, the event is durable first: fallback must not forget an operator decision.
+            append(decided, RunEventType.APPROVAL_DECIDED, ApprovalSupport.encode(selected));
+            checkpoints.save(decided);
+            return inspect(runId);
         }
     }
 
@@ -187,7 +214,8 @@ public final class ManagedRunService {
     public RunInspection inspect(String runId) {
         CheckpointLoadResult loaded = checkpoints.load(runId);
         EventLogReadResult events = eventLog.readAll(runId);
-        RunCheckpoint checkpoint = reconcileCancellation(loaded.checkpoint(), events.events());
+        RunCheckpoint checkpoint = ApprovalSupport.reconcile(
+                reconcileCancellation(loaded.checkpoint(), events.events()), events.events());
         List<RunEvent> completeEventView = completedEventView(checkpoint, events.events());
         return new RunInspection(
                 checkpoint.runId(),
@@ -198,7 +226,8 @@ public final class ManagedRunService {
                 checkpoint.policyState(),
                 loaded.recoveredFromBackup(),
                 completeEventView,
-                events.ignoredIncompleteTail());
+                events.ignoredIncompleteTail(),
+                checkpoint.approval());
     }
 
     private RunCheckpoint advance(
@@ -214,11 +243,15 @@ public final class ManagedRunService {
                 CheckpointPhase.NODE_STARTED,
                 checkpoint.state(),
                 checkpoint.policyConfiguration(),
-                attempted);
+                attempted,
+                checkpoint.approval());
         checkpoints.save(started);
         append(started, RunEventType.NODE_STARTED, "node execution started");
 
-        RunState updatedState = runner.step(prepared, checkpoint.state(), checkpoint.runId());
+        RunState updatedState = checkpoint.approval() == null
+                ? runner.step(prepared, checkpoint.state(), checkpoint.runId())
+                : runner.resolveApproval(prepared, checkpoint.state(), checkpoint.runId(),
+                        checkpoint.approval().decision() == ApprovalDecision.APPROVED);
         TransitionEvent transition = updatedState.events().getLast();
         FailureFingerprint failure = transition.failure() == null
                 ? null
@@ -263,12 +296,12 @@ public final class ManagedRunService {
     private RunCheckpoint loadForAction(String runId) {
         CheckpointLoadResult loaded = checkpoints.load(runId);
         List<RunEvent> events = eventLog.readAll(runId).events();
-        RunCheckpoint checkpoint = reconcileCancellation(loaded.checkpoint(), events);
-        boolean cancellationRecovered = checkpoint != loaded.checkpoint();
-        if (loaded.recoveredFromBackup() || cancellationRecovered) {
+        RunCheckpoint checkpoint = ApprovalSupport.reconcile(reconcileCancellation(loaded.checkpoint(), events), events);
+        boolean operatorDecisionRecovered = checkpoint != loaded.checkpoint();
+        if (loaded.recoveredFromBackup() || operatorDecisionRecovered) {
             checkpoints.save(checkpoint);
-            String detail = cancellationRecovered
-                    ? "cancelled state restored from durable event"
+            String detail = operatorDecisionRecovered
+                    ? "operator decision restored from durable event"
                     : "state restored from backup";
             append(checkpoint, RunEventType.CHECKPOINT_RECOVERED, detail);
         }
@@ -322,6 +355,17 @@ public final class ManagedRunService {
             List<RunEvent> durableEvents) {
         List<RunEvent> completeEvents = new ArrayList<>(durableEvents);
         long sequence = completeEvents.isEmpty() ? 1 : completeEvents.getLast().sequence() + 1;
+        if (checkpoint.approval() != null) {
+            ApprovalState approval = checkpoint.approval();
+            for (ApprovalDecision decision : List.of(ApprovalDecision.PENDING, approval.decision()).stream().distinct().toList()) {
+                if (!ApprovalSupport.recorded(completeEvents, checkpoint, decision)) {
+                    completeEvents.add(RunEvent.current(checkpoint.runId(), sequence++,
+                            decision == ApprovalDecision.PENDING ? RunEventType.APPROVAL_REQUESTED : RunEventType.APPROVAL_DECIDED,
+                            approval.node(), checkpoint.state().status(), checkpoint.state().executedSteps(),
+                            ApprovalSupport.encode(approval.withDecision(decision))));
+                }
+            }
+        }
         for (TransitionEvent transition : checkpoint.state().events()) {
             boolean recorded = completeEvents.stream().anyMatch(event ->
                     event.type() == RunEventType.NODE_COMPLETED
@@ -432,8 +476,30 @@ public final class ManagedRunService {
     }
 
     private static boolean canExecute(RunCheckpoint checkpoint) {
+        return operationallyRunnable(checkpoint)
+                && (checkpoint.approval() == null || checkpoint.approval().decision() != ApprovalDecision.PENDING);
+    }
+
+    private static boolean operationallyRunnable(RunCheckpoint checkpoint) {
         return checkpoint.state().status() == RunStatus.RUNNING
                 && checkpoint.policyState().lastDecision().outcome() == PolicyOutcome.CONTINUE;
+    }
+
+    private RunCheckpoint ensureApproval(RunCheckpoint checkpoint, GraphDefinition graph) {
+        if (!operationallyRunnable(checkpoint)) { return checkpoint; }
+        ApprovalState expected = ApprovalSupport.pending(checkpoint, graph);
+        ApprovalState current = checkpoint.approval();
+        if (current != null) {
+            if (expected == null || !current.withDecision(ApprovalDecision.PENDING).equals(expected)) {
+                throw new ManagedRunException("saved approval does not match the current graph gate");
+            }
+            return checkpoint;
+        }
+        if (expected == null) { return checkpoint; }
+        RunCheckpoint waiting = ApprovalSupport.withApproval(checkpoint, expected);
+        checkpoints.save(waiting);
+        append(waiting, RunEventType.APPROVAL_REQUESTED, ApprovalSupport.encode(expected));
+        return waiting;
     }
 
     private static RunCheckpoint withPolicyDecision(
@@ -445,7 +511,8 @@ public final class ManagedRunService {
                 checkpoint.phase(),
                 checkpoint.state(),
                 checkpoint.policyConfiguration(),
-                checkpoint.policyState().withDecision(decision));
+                checkpoint.policyState().withDecision(decision),
+                checkpoint.approval());
     }
 
     private void appendPolicyDecision(RunCheckpoint checkpoint) {
