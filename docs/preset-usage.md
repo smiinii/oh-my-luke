@@ -8,7 +8,7 @@
 
 ```bash
 ./gradlew installDist
-OML_BIN="$PWD/build/install/oh-my-luke/bin/omluke"
+OML_BIN="$PWD/build/install/omluke/bin/omluke"
 OML_DEMO_DIR="$(mktemp -d)"
 cp examples/presets/task.json examples/presets/hello.txt "$OML_DEMO_DIR/"
 cd "$OML_DEMO_DIR"
