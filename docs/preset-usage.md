@@ -74,7 +74,7 @@ omluke cancel demo
 
 ## 프리셋 연결 계약
 
-내부 코드를 수정할 때 확인하는 규칙이다. 전체 구성은 [아키텍처 안내](architecture.md), 노드 저장·복구는 [코어 실행과 복구](architecture/core-runtime.md)를 따른다.
+내부 코드를 수정할 때 확인하는 규칙이다. 전체 구성은 [아키텍처 안내](architecture.md), 노드 저장·복구는 [코어 실행과 복구](core-runtime.md)를 따른다.
 
 - `preset` 패키지는 기존 커널·관리 런타임·FileTool·ProcessTool·AiRuntime을 조합한다. 모든 프리셋 노드 지문에 고정 작업표와 실행기 지문을 포함한다.
 - AI 응답은 정확한 문자열 필드 `path`, `content`만 가진 JSON이다. 중복 키·추가 필드·범위 밖 파일은 거부하며, 검증이나 예산을 AI가 바꿀 수 없다.

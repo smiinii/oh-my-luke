@@ -1,6 +1,6 @@
 # 코어 실행과 복구
 
-그래프·관리 런타임·상태 저장·정책을 수정할 때 읽는 기술 계약이다. 전체 구성은 [아키텍처 안내](../architecture.md), 권한과 OS 격리는 [보안 문서](../security.md)를 따른다.
+그래프·관리 런타임·상태 저장·정책을 수정할 때 읽는 기술 계약이다. 전체 구성은 [아키텍처 안내](architecture.md), 권한과 OS 격리는 [보안 문서](security.md)를 따른다.
 
 ## 그래프 커널 계약
 
@@ -88,17 +88,17 @@ FileToolNode / ProcessToolNode
 - 도구 노드는 성공, 승인 필요, 영구 차단, 비정상 종료, 시간 초과를 구조화된 결과와 `FailureInfo`로 구별한다.
 - 파일 본문과 프로세스 출력은 `.oml/runs/<run-id>/artifacts/`에 저장하고 상태에는 경로·종료 코드·권한 이유·크기 같은 메타데이터를 남긴다.
 - 노드의 외부 부작용은 일반적으로 정확히 한 번을 보장할 수 없다. 파일 도구는 작업 ID에 결속된 최초 체크포인트와 현재 완료 상태 검증으로 성공한 변경의 재실행을 멱등 처리한다.
-- 프로세스처럼 외부 효과가 있는 도구에는 별도의 멱등성 키나 사전 조건이 필요하다. 승인·복구·잠금·OS 경계의 상세 기준은 [보안 문서](../security.md)에 있다.
+- 프로세스처럼 외부 효과가 있는 도구에는 별도의 멱등성 키나 사전 조건이 필요하다. 승인·복구·잠금·OS 경계의 상세 기준은 [보안 문서](security.md)에 있다.
 
 ## CLI 재개와 검증 근거
 
-독립 CLI는 저장된 `TaskSpec`으로 Direct·Loop 그래프를 재구성한다. 임의 Java 노드 그래프는 `GraphResolver` 등록이 필요하다. `inspect`와 `cancel`은 저장 파일만으로 동작하며, 사용 절차와 제한은 [프리셋 사용법](../preset-usage.md)을 따른다.
+독립 CLI는 저장된 `TaskSpec`으로 Direct·Loop 그래프를 재구성한다. 임의 Java 노드 그래프는 `GraphResolver` 등록이 필요하다. `inspect`와 `cancel`은 저장 파일만으로 동작하며, 사용 절차와 제한은 [프리셋 사용법](preset-usage.md)을 따른다.
 
-- [그래프 테스트](../../src/test/java/io/ohmyluke/graph/): 조건 선택·잘못된 그래프·단계 제한
-- [상태 저장 테스트](../../src/test/java/io/ohmyluke/state/): 스키마·서명·원자적 저장·손상·로그·권한 저장
-- [관리 실행 테스트](../../src/test/java/io/ohmyluke/runtime/ManagedRunServiceTest.java): 중단·재개·정책 연결
-- [정책 테스트](../../src/test/java/io/ohmyluke/policy/): 완료·한도·반복 실패·권한 판정
-- [도구 테스트](../../src/test/java/io/ohmyluke/tool/): 변경 복구·재실행·격리 경계
-- [프리셋 테스트](../../src/test/java/io/ohmyluke/preset/): 사용자 결과·재개·시도 및 사용량 제한
+- [그래프 테스트](../src/test/java/io/ohmyluke/graph/): 조건 선택·잘못된 그래프·단계 제한
+- [상태 저장 테스트](../src/test/java/io/ohmyluke/state/): 스키마·서명·원자적 저장·손상·로그·권한 저장
+- [관리 실행 테스트](../src/test/java/io/ohmyluke/runtime/ManagedRunServiceTest.java): 중단·재개·정책 연결
+- [정책 테스트](../src/test/java/io/ohmyluke/policy/): 완료·한도·반복 실패·권한 판정
+- [도구 테스트](../src/test/java/io/ohmyluke/tool/): 변경 복구·재실행·격리 경계
+- [프리셋 테스트](../src/test/java/io/ohmyluke/preset/): 사용자 결과·재개·시도 및 사용량 제한
 
-[전체 설계로 돌아가기](../architecture.md)
+[전체 설계로 돌아가기](architecture.md)

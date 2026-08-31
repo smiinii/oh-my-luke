@@ -36,6 +36,17 @@ OML은 명령어 문자열 허용 목록이 아니라 작업 능력과 정확한
 
 사용자가 프로젝트 자율 실행을 켜면 `ASK` 작업을 다시 묻지 않는다. 실행 사실은 사용자에게 알리며 `omluke permissions reset`으로 다시 승인 방식으로 돌아갈 수 있다.
 
+개발 소스 저장소 루트에서 아래 명령을 실행하면 해당 저장소의 권한 설정에 적용된다. 다른 프로젝트에서는 [개발용 실행 예제](preset-usage.md)의 빌드된 실행 파일로 같은 하위 명령을 사용한다.
+
+```bash
+./gradlew run --args="permissions show"
+./gradlew run --args="permissions autonomous on"
+./gradlew run --args="permissions autonomous off"
+./gradlew run --args="permissions reset"
+```
+
+`autonomous off`는 자율 실행만 해제하고 기존 승인은 유지한다. `reset`은 저장된 승인도 초기화한다. 대화형으로 승인 선택지를 묻는 CLI는 아직 없으며, 권한 정책 API와 프리셋의 허용·차단 판정에 연결되어 있다.
+
 ## 구조화 파일 도구
 
 - 셸을 통하지 않고 읽기, 쓰기, 디렉터리 생성, 이동, 삭제를 각각 구조화한다.

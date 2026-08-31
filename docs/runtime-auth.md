@@ -41,7 +41,7 @@ AiRuntime
 - 요청은 run ID·노드 ID·실행 단계로 해시한 호출 ID, 지시문, 선택한 문맥으로 구성한다. 문맥 키는 정렬한 불변 값이며 `local`을 포함한 유효 실행 ID와 범위 없음 상태를 혼동하지 않는다.
 - 가짜 스크립트는 논리 호출 ID로 결과를 찾는다. 요청 내용 불일치와 미등록 호출은 서로 다른 실패 코드다.
 - AI 노드와 가짜 실행기의 지문은 길이 접두어 직렬화·SHA-256으로 설정, 논리 요청 집합, 결과와 사용량 차이를 구분한다.
-- AI 출력 상태 반영과 `ExecutionMetrics` 보고 뒤의 누적·한도 판정은 [코어 실행과 복구](architecture/core-runtime.md)가 담당한다. 가짜 실행기의 메모리 재생과 실제 Codex 호출의 영속 결과 저장은 별개다.
+- AI 출력 상태 반영과 `ExecutionMetrics` 보고 뒤의 누적·한도 판정은 [코어 실행과 복구](core-runtime.md)가 담당한다. 가짜 실행기의 메모리 재생과 실제 Codex 호출의 영속 결과 저장은 별개다.
 
 ## Codex CLI 연결
 
@@ -91,6 +91,16 @@ JSONL에서 최종 에이전트 메시지, Codex 세션 ID와 `turn.completed.us
 완료 결과는 요청·OML 런타임 설정 지문에 결속해 OML 내부에 저장한다. 같은 논리 호출은 저장 결과를 재사용하고 다른 요청이나 OML의 명시적 모델 설정이 같은 ID를 사용하면 실행 전에 거부한다. `inherit`의 실제 모델·추론 값과 CLI 버전은 공식 CLI 내부 값이라 지문에 포함되지 않으므로, 사용자가 그 외부 값을 바꾼 뒤 새 응답을 원하면 새 논리 호출 ID를 사용해야 한다. 저장된 로그인과 실제 AI를 쓰는 통합 테스트는 `OML_CODEX_INTEGRATION=true`일 때만 실행되며 기본 CI에서는 비활성화된다.
 
 저장 위치는 `.oml/runtime/codex/invocations/`다. 원자적 파일 교체와 JVM·운영체제 파일 잠금으로 같은 논리 호출의 동시 중복 실행을 막는다. 제공자 stderr·예외 원문은 저장하지 않고 안전한 실패 코드로만 분류한다.
+
+## 개발용 연결 검증
+
+저장소 루트에서 실행하는 런타임 단독 통합 테스트다. 저장된 로그인과 실제 AI 사용량을 사용하며 기본 테스트와 CI에서는 비활성화된다. 파일 적용·검증까지 확인하는 `PresetCodexIntegrationTest`는 [프리셋 사용법](preset-usage.md)을 따른다.
+
+```bash
+codex login status
+OML_CODEX_INTEGRATION=true ./gradlew test \
+  --tests io.ohmyluke.ai.codex.CodexCliRuntimeIntegrationTest
+```
 
 공식 근거:
 

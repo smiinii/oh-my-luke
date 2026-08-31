@@ -68,7 +68,7 @@ GraphRunner → Node
 
 | 확인하려는 내용 | 읽을 문서 |
 | --- | --- |
-| 커널 계약·노드 실행 순서·저장·복구·정책 카운터 | [코어 실행과 복구](architecture/core-runtime.md) |
+| 커널 계약·노드 실행 순서·저장·복구·정책 카운터 | [코어 실행과 복구](core-runtime.md) |
 | 권한·파일 체크포인트·OS 샌드박스·신뢰 경계 | [보안](security.md) |
 | AI 요청 계약·가짜 실행기·Codex·인증·토큰 | [실행기와 인증](runtime-auth.md) |
 | 작업표·실행 명령·Direct/Loop 연결·운영 제한 | [프리셋 사용법](preset-usage.md) |
