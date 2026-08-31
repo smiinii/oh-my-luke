@@ -13,6 +13,12 @@ import io.ohmyluke.state.ProjectPermissionManager;
 import io.ohmyluke.state.ProjectPermissionStore;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
+import io.ohmyluke.preset.PresetRunService;
+import io.ohmyluke.ai.codex.CodexCliConfiguration;
+import io.ohmyluke.ai.codex.CodexCliRuntime;
+import io.ohmyluke.ai.codex.CodexReasoningEffort;
+import io.ohmyluke.tool.PlatformProcessSandbox;
 
 /** Entry point for the Oh My Luke command-line application. */
 public final class OmlukeApplication {
@@ -31,7 +37,17 @@ public final class OmlukeApplication {
         ProjectPermissionManager permissions = new ProjectPermissionManager(
                 new ProjectPermissionStore(Path.of("")),
                 Clock.systemUTC());
-        int exitCode = new OmlukeCli(runs, GraphResolver.none(), permissions, System.out, System.err)
+        PresetRunService presets = new PresetRunService(Path.of(""), task -> {
+            CodexCliConfiguration configuration = CodexCliConfiguration.defaults(Path.of(""))
+                    .withTimeout(Duration.ofMillis(Math.min(300_000, task.maxElapsedMillis())));
+            if (task.model() != null) { configuration = configuration.withModel(task.model()); }
+            if (task.reasoning() != null) {
+                configuration = configuration.withReasoning(CodexReasoningEffort.valueOf(
+                        task.reasoning().toUpperCase(java.util.Locale.ROOT)));
+            }
+            return new CodexCliRuntime(configuration);
+        }, permissions, PlatformProcessSandbox.detect(), Clock.systemUTC());
+        int exitCode = new OmlukeCli(runs, GraphResolver.none(), permissions, System.out, System.err, presets)
                 .execute(args);
         if (exitCode != 0) {
             System.exit(exitCode);

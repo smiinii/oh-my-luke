@@ -47,6 +47,19 @@ public final class FileTool {
     }
 
     public FileToolResult execute(FileToolRequest request) {
+        return execute(request, null);
+    }
+
+    /** Compare under the project mutation lock; replay of the same applied write remains idempotent. */
+    public FileToolResult writeIfUnchanged(FileToolRequest request, byte[] expectedContent) {
+        Objects.requireNonNull(request, "request");
+        if (request.operation() != FileOperation.WRITE) {
+            throw new IllegalArgumentException("conditional execution requires WRITE");
+        }
+        return execute(request, Objects.requireNonNull(expectedContent, "expectedContent").clone());
+    }
+
+    private FileToolResult execute(FileToolRequest request, byte[] expectedContent) {
         Objects.requireNonNull(request, "request");
         ToolPermissionRequest permissionRequest;
         try {
@@ -79,7 +92,7 @@ public final class FileTool {
                     "file.permission-scope-changed",
                     "The file target or risk class changed after approval; no mutation was performed");
         }
-        return perform(request, source, destination, permissionRequest, decision);
+        return perform(request, source, destination, permissionRequest, decision, expectedContent);
     }
 
     public void restore(String checkpointId) {
@@ -91,13 +104,14 @@ public final class FileTool {
             Path source,
             Path destination,
             ToolPermissionRequest permissionRequest,
-            ToolPermissionDecision decision) {
+            ToolPermissionDecision decision,
+            byte[] expectedContent) {
         if (request.operation() == FileOperation.READ) {
             return read(source, decision);
         }
         try {
             return checkpoints.withMutationLock(
-                    () -> performMutation(request, source, destination, permissionRequest, decision));
+                    () -> performMutation(request, source, destination, permissionRequest, decision, expectedContent));
         } catch (RuntimeException error) {
             return new FileToolResult(
                     decision,
@@ -113,7 +127,8 @@ public final class FileTool {
             Path source,
             Path destination,
             ToolPermissionRequest permissionRequest,
-            ToolPermissionDecision decision) {
+            ToolPermissionDecision decision,
+            byte[] expectedContent) {
         List<Path> roots = destination == null ? List.of(source) : List.of(source, destination);
         try {
             if (checkpoints.alreadyApplied(request, permissionRequest, roots)) {
@@ -134,6 +149,10 @@ public final class FileTool {
         }
         String checkpointId;
         try {
+            if (expectedContent != null && !java.util.Arrays.equals(
+                    expectedContent, SecureFileOperations.readAllBytes(source, MAX_CONTENT_BYTES))) {
+                return denied("file.content-conflict", "File changed since the proposal; no mutation was performed");
+            }
             checkpointId = checkpoints.capture(
                     request,
                     permissionRequest,
