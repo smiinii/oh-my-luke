@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "goal": "Make hello.txt contain OML_READY",
+  "start": "check",
+  "maxSteps": 50,
+  "maxUsage": 0,
+  "maxElapsedMillis": 3600000,
+  "steps": [
+    {
+      "id": "check",
+      "type": "CHECK",
+      "file": "hello.txt",
+      "validation": {"requiredText": ["OML_READY"], "forbiddenText": []},
+      "onSuccess": "final",
+      "onFailure": "edit"
+    },
+    {
+      "id": "edit",
+      "type": "EDIT",
+      "approvalBeforeApply": true,
+      "onSuccess": "final",
+      "onFailure": "stopped",
+      "task": {
+        "schemaVersion": 1,
+        "goal": "Replace the file with one line: OML_READY",
+        "file": "hello.txt",
+        "mode": "LOOP",
+        "maxAttempts": 3,
+        "maxUsage": 0,
+        "maxElapsedMillis": 3600000,
+        "maxRepeatedFailures": 2,
+        "validation": {"requiredText": ["OML_READY"], "forbiddenText": []}
+      }
+    },
+    {
+      "id": "final",
+      "type": "CHECK",
+      "file": "hello.txt",
+      "validation": {"requiredText": ["OML_READY"], "forbiddenText": []},
+      "onSuccess": "succeeded",
+      "onFailure": "stopped"
+    }
+  ]
+}

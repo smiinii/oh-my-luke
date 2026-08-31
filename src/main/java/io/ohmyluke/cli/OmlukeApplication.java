@@ -15,10 +15,15 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import io.ohmyluke.preset.PresetRunService;
+import io.ohmyluke.preset.WorkflowRunService;
+import io.ohmyluke.preset.TaskSpec;
+import io.ohmyluke.ai.AiRuntime;
 import io.ohmyluke.ai.codex.CodexCliConfiguration;
 import io.ohmyluke.ai.codex.CodexCliRuntime;
 import io.ohmyluke.ai.codex.CodexReasoningEffort;
 import io.ohmyluke.tool.PlatformProcessSandbox;
+import io.ohmyluke.tool.ProcessSandbox;
+import java.util.function.Function;
 
 /** Entry point for the Oh My Luke command-line application. */
 public final class OmlukeApplication {
@@ -37,7 +42,7 @@ public final class OmlukeApplication {
         ProjectPermissionManager permissions = new ProjectPermissionManager(
                 new ProjectPermissionStore(Path.of("")),
                 Clock.systemUTC());
-        PresetRunService presets = new PresetRunService(Path.of(""), task -> {
+        Function<TaskSpec, AiRuntime> runtimeFactory = task -> {
             CodexCliConfiguration configuration = CodexCliConfiguration.defaults(Path.of(""))
                     .withTimeout(Duration.ofMillis(Math.min(300_000, task.maxElapsedMillis())));
             if (task.model() != null) { configuration = configuration.withModel(task.model()); }
@@ -46,8 +51,14 @@ public final class OmlukeApplication {
                         task.reasoning().toUpperCase(java.util.Locale.ROOT)));
             }
             return new CodexCliRuntime(configuration);
-        }, permissions, PlatformProcessSandbox.detect(), Clock.systemUTC());
-        int exitCode = new OmlukeCli(runs, GraphResolver.none(), permissions, System.out, System.err, presets)
+        };
+        ProcessSandbox sandbox = PlatformProcessSandbox.detect();
+        PresetRunService presets = new PresetRunService(Path.of(""), runtimeFactory,
+                permissions, sandbox, Clock.systemUTC());
+        WorkflowRunService workflows = new WorkflowRunService(Path.of(""), runtimeFactory,
+                permissions, sandbox, Clock.systemUTC());
+        int exitCode = new OmlukeCli(runs, GraphResolver.none(), permissions, System.out, System.err,
+                presets, workflows)
                 .execute(args);
         if (exitCode != 0) {
             System.exit(exitCode);
