@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /** Conservative output redaction applied before process text reaches state or an AI runtime. */
-final class SecretRedactor {
+public final class SecretRedactor {
     private static final String JSON_SECRET_KEY =
             "(?:proxy-)?authorization|(?:set-)?cookie|token|secret|password|api[_-]?key";
     private static final List<Pattern> TOKEN_PATTERNS = List.of(
@@ -27,7 +27,7 @@ final class SecretRedactor {
             Pattern.compile(
                     "(?i)(?:gh[pousr]_[A-Za-z0-9_]*|sk-[A-Za-z0-9_-]*|AKIA[0-9A-Z]*|eyJ[A-Za-z0-9_.-]*|(?<![A-Za-z0-9_-])(?:set-)?cookie\\s*[:=].*|(?:(?:proxy-)?authorization|token|secret|password|api[_-]?key)\\s*[:=].*)$"));
 
-    String redact(String value, boolean truncated) {
+    public String redact(String value, boolean truncated) {
         String redacted = value;
         for (Pattern pattern : TOKEN_PATTERNS) {
             redacted = pattern.matcher(redacted).replaceAll("[REDACTED]");

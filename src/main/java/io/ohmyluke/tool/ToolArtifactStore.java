@@ -36,6 +36,7 @@ public final class ToolArtifactStore {
         Path target = directory.resolve(safeName);
         Path temporary = null;
         try {
+            rejectSymlinks(target);
             Path oml = projectRoot.resolve(".oml");
             if (Files.isSymbolicLink(oml)) {
                 throw new ProcessToolException(".oml must not be a symbolic link");
@@ -57,6 +58,35 @@ public final class ToolArtifactStore {
                 } catch (IOException ignored) {
                     // Temporary artifacts are never referenced from graph state.
                 }
+            }
+        }
+    }
+
+    /** Reads only a named OML artifact with a strict byte bound and no symbolic-link traversal. */
+    public byte[] read(String operationId, String name, int maxBytes) {
+        if (maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
+            throw new IllegalArgumentException("invalid artifact read limit");
+        }
+        Path target = projectRoot.resolve(".oml/runs").resolve(runId).resolve("artifacts")
+                .resolve(validateId(operationId, "operationId")).resolve(validateId(name, "artifact name"));
+        rejectSymlinks(target);
+        try (var input = Files.newInputStream(target, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] content = input.readNBytes(maxBytes + 1);
+            if (content.length > maxBytes) {
+                throw new ProcessToolException("artifact exceeds read limit");
+            }
+            return content;
+        } catch (IOException error) {
+            throw new ProcessToolException("failed to read tool artifact", error);
+        }
+    }
+
+    private void rejectSymlinks(Path target) {
+        Path current = projectRoot;
+        for (Path part : projectRoot.relativize(target)) {
+            current = current.resolve(part);
+            if (Files.isSymbolicLink(current)) {
+                throw new ProcessToolException("artifact paths must not contain symbolic links");
             }
         }
     }

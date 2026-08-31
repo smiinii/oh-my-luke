@@ -6,7 +6,11 @@ import io.ohmyluke.runtime.ManagedRunService;
 import io.ohmyluke.runtime.RunInspection;
 import io.ohmyluke.policy.PermissionMessages;
 import io.ohmyluke.state.ProjectPermissionManager;
+import io.ohmyluke.preset.PresetRunService;
+import io.ohmyluke.preset.PresetResult;
+import io.ohmyluke.preset.TaskSpec;
 import java.io.PrintStream;
+import java.nio.file.Path;
 import java.util.Objects;
 
 /** Minimal command surface for inspecting, cancelling, and resuming managed runs. */
@@ -16,6 +20,7 @@ public final class OmlukeCli {
     private final ProjectPermissionManager permissions;
     private final PrintStream out;
     private final PrintStream error;
+    private final PresetRunService presets;
 
     public OmlukeCli(
             ManagedRunService runs,
@@ -23,11 +28,17 @@ public final class OmlukeCli {
             ProjectPermissionManager permissions,
             PrintStream out,
             PrintStream error) {
+        this(runs, graphs, permissions, out, error, null);
+    }
+
+    public OmlukeCli(ManagedRunService runs, GraphResolver graphs, ProjectPermissionManager permissions,
+                     PrintStream out, PrintStream error, PresetRunService presets) {
         this.runs = Objects.requireNonNull(runs, "runs");
         this.graphs = Objects.requireNonNull(graphs, "graphs");
         this.permissions = Objects.requireNonNull(permissions, "permissions");
         this.out = Objects.requireNonNull(out, "out");
         this.error = Objects.requireNonNull(error, "error");
+        this.presets = presets;
     }
 
     public int execute(String[] args) {
@@ -40,6 +51,9 @@ public final class OmlukeCli {
         try {
             if (args[0].equals("permissions")) {
                 return permissions(args);
+            }
+            if (args[0].equals("run") && presets != null) {
+                return run(args);
             }
             if (args.length == 2) {
                 return switch (args[0]) {
@@ -54,6 +68,39 @@ public final class OmlukeCli {
             error.println("오류: " + failure.getMessage());
             return 1;
         }
+    }
+
+    private int run(String[] args) {
+        if (args.length < 2 || args.length % 2 != 0) { return usageError(); }
+        String runId = "run-" + java.util.UUID.randomUUID();
+        String model = null;
+        String reasoning = null;
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int i = 2; i < args.length; i += 2) {
+            if (!seen.add(args[i])) { return usageError(); }
+            switch (args[i]) {
+                case "--run-id" -> runId = args[i + 1];
+                case "--model" -> model = args[i + 1];
+                case "--reasoning" -> reasoning = args[i + 1];
+                default -> { return usageError(); }
+            }
+        }
+        TaskSpec task = presets.readTask(Path.of(args[1])).withRuntimeSelection(model, reasoning);
+        presets.start(runId, task);
+        out.println("runId=" + runId); // visible before a potentially long runtime call
+        out.println("mode=" + task.mode());
+        out.println("model=" + (task.model() == null ? "inherit" : task.model()));
+        out.println("reasoning=" + (task.reasoning() == null ? "inherit" : task.reasoning()));
+        return printPreset(presets.resume(runId));
+    }
+
+    private int printPreset(PresetResult result) {
+        out.println("result=" + result.status());
+        out.println("reason=" + result.reason());
+        out.println("aiAttempts=" + result.attempts());
+        out.println("recordedUsage=" + result.recordedUsage());
+        out.println("allTokenUsageAvailable=" + result.allTokenUsageAvailable());
+        return result.exitCode();
     }
 
     private int permissions(String[] args) {
@@ -106,6 +153,7 @@ public final class OmlukeCli {
         out.println("events=" + inspection.events().size());
         out.println("recoveredFromBackup=" + inspection.recoveredFromBackup());
         out.println("ignoredIncompleteEventTail=" + inspection.ignoredIncompleteEventTail());
+        if (presets != null && presets.supports(runId)) { printPreset(presets.inspect(runId)); }
         return 0;
     }
 
@@ -117,6 +165,10 @@ public final class OmlukeCli {
     }
 
     private int resume(String runId) {
+        if (presets != null && presets.supports(runId)) {
+            out.println("runId=" + runId);
+            return printPreset(presets.resume(runId));
+        }
         RunInspection inspection = runs.inspect(runId);
         GraphDefinition graph = graphs.resolve(inspection.graphSignature())
                 .orElseThrow(() -> new IllegalStateException(
@@ -130,6 +182,7 @@ public final class OmlukeCli {
     }
 
     private static void printUsage(PrintStream target) {
+        target.println("사용법: omluke run <task.json> [--run-id ID] [--model MODEL] [--reasoning LEVEL]");
         target.println("사용법: omluke <inspect|cancel|resume> <run-id>");
         target.println("       omluke permissions <show|reset>");
         target.println("       omluke permissions autonomous <on|off>");

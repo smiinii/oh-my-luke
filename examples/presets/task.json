@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "goal": "Replace hello.txt with a short greeting that contains OML_READY and does not contain old.",
+  "file": "hello.txt",
+  "mode": "LOOP",
+  "maxAttempts": 3,
+  "maxUsage": 0,
+  "maxElapsedMillis": 180000,
+  "maxRepeatedFailures": 2,
+  "validation": {
+    "requiredText": ["OML_READY"],
+    "forbiddenText": ["old"],
+    "command": null
+  },
+  "model": null,
+  "reasoning": null
+}
