@@ -17,6 +17,18 @@ public enum AiFailureCode {
     TIMED_OUT(
             "runtime.timed-out",
             "AI runtime invocation timed out"),
+    RUNTIME_UNAVAILABLE(
+            "runtime.unavailable",
+            "AI runtime is not installed or could not be started"),
+    INPUT_LIMIT_EXCEEDED(
+            "runtime.input-limit-exceeded",
+            "AI runtime input exceeded the configured limit"),
+    OUTPUT_LIMIT_EXCEEDED(
+            "runtime.output-limit-exceeded",
+            "AI runtime output exceeded the configured limit"),
+    REQUEST_CONFLICT(
+            "runtime.request-conflict",
+            "AI invocation was already used with a different request or runtime configuration"),
     EXECUTION_FAILED(
             "runtime.execution-failed",
             "AI runtime execution failed"),

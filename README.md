@@ -6,7 +6,7 @@ Oh My Luke(OML)는 사용자가 이미 로그인한 AI CLI를 활용해 개발 �
 
 ## 현재 상태
 
-프로젝트 초기 단계입니다. AI 없이 동작하는 그래프 커널, 로컬 상태 저장·재개, 객관적 완료·안전 중단 정책, 기억되는 권한, 범용 파일·프로세스 도구, 프로젝트 스캐너와 토큰을 쓰지 않는 가짜 AI 실행기를 구현했습니다.
+프로젝트 초기 단계입니다. AI 없이 동작하는 그래프 커널, 로컬 상태 저장·재개, 객관적 완료·안전 중단 정책, 기억되는 권한, 범용 파일·프로세스 도구, 프로젝트 스캐너, 가짜 AI 실행기와 첫 실제 BYOR 어댑터인 Codex CLI 실행기를 구현했습니다.
 
 ```text
 A → 검사
@@ -30,7 +30,10 @@ A → 검사
 - 프로세스 도구는 `.git`, `.oml`, 인증 파일을 제외한 임시 프로젝트 사본에서 실행하므로 원본 파일을 직접 바꾸지 않습니다.
 - 프로세스 승인은 실제 실행 파일과 전체 인자에 결속됩니다. macOS는 Seatbelt, Linux/WSL2는 bubblewrap을 사용하며 실제 Linux 격리는 Ubuntu CI에서도 검증합니다. 검증된 샌드박스가 없으면 실행을 거부하고 Windows 프로세스 샌드박스는 아직 지원하지 않습니다.
 - 권한 저장과 도구 노드는 현재 Java API로 제공됩니다. 사용자 대화형 CLI 연결은 프리셋·런타임 단계에서 추가합니다.
-- `FakeAiRuntime`은 실제 AI·네트워크·외부 프로세스 없이 예상 요청과 응답을 재생해 AI 그래프와 사용량 제한을 테스트합니다. 실제 Codex CLI 연결은 다음 마일스톤입니다.
+- `FakeAiRuntime`은 실제 AI·네트워크·외부 프로세스 없이 예상 요청과 응답을 재생해 AI 그래프와 사용량 제한을 테스트합니다.
+- `CodexCliRuntime`은 사용자가 `codex login`으로 저장한 로그인을 공식 CLI를 통해 재사용합니다. 기본 모델·추론 강도는 사용자 Codex 설정을 상속하고, Java API에서 명시한 경우에만 실행별로 재정의합니다.
+- 실제 호출은 민감 파일과 OML 내부 파일을 제외한 임시 프로젝트 사본을 기본 작업공간으로 삼고 Codex 셸 샌드박스를 `read-only`로 고정합니다. JSONL 최종 응답·세션 ID·토큰 사용량을 파싱하고 논리 호출 결과를 `.oml/runtime/codex/invocations/`에 원자적으로 저장합니다.
+- 사용자용 `omluke run --model ...` 명령과 원본 프로젝트 변경은 아직 연결하지 않았습니다. 다음 Direct·Loop 프리셋 단계에서 실행 흐름을 CLI에 공개합니다.
 
 ## 기술 기준
 
@@ -48,6 +51,14 @@ A → 검사
 ```bash
 ./gradlew test
 ./gradlew run
+```
+
+실제 Codex 저장 로그인을 사용하는 통합 테스트는 기본 테스트와 CI에서는 실행하지 않습니다. 로컬에서 Codex CLI 설치와 로그인을 확인한 뒤 명시적으로 한 번 실행할 수 있습니다. 현재 개발 환경에서는 ChatGPT 로그인을 사용했습니다.
+
+```bash
+codex login status
+OML_CODEX_INTEGRATION=true ./gradlew test \
+  --tests io.ohmyluke.ai.codex.CodexCliRuntimeIntegrationTest
 ```
 
 Windows:

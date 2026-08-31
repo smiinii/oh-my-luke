@@ -166,7 +166,31 @@ AiNode
 - AI 호출은 도구 호출로 세지 않고 `usage`만 별도로 보고한다. 노드 호출 수는 기존 그래프 정책이 계산한다.
 - `usage`는 호출 결과를 받은 뒤 누적된다. 한 호출의 사용량을 미리 알 수 없으므로 남은 한도를 넘는 호출 자체를 사전 차단하지는 못하고 이후 노드부터 중단한다.
 - 실행기 실패는 `AiFailureCode`에 등록된 코드와 공개 메시지만 영속화한다. 제공자의 stderr·예외 원문이나 임의 문자열은 상태나 이벤트에 넣을 수 없다.
-- 실제 인증 중계와 외부 AI 호출의 멱등 결과 저장은 다음 `CodexCliRuntime`에서 별도 설계한다.
+- 실제 인증 중계와 외부 AI 호출의 멱등 결과 저장은 아래 `CodexCliRuntime` 슬라이스가 담당한다.
+
+## Codex CLI 실행기 슬라이스
+
+`CodexCliRuntime`은 `AiRuntime` 뒤에 있는 첫 실제 BYOR 어댑터다. 그래프 커널과 가짜 실행기는 Codex 클래스나 인증 방식에 의존하지 않는다.
+
+```text
+AiNode
+  → CodexCliRuntime
+      ├── 공식 version / login status probe
+      ├── 민감 파일 제외 임시 프로젝트 사본
+      ├── codex exec --json --ephemeral --sandbox read-only
+      ├── JSONL 최종 응답·세션 ID·토큰 파서
+      └── 논리 호출별 원자적 결과 저장과 파일 잠금
+  → 전체 기록 토큰을 ExecutionMetrics로 보고
+```
+
+- OML은 인증 파일을 읽지 않고 공식 CLI가 저장한 로그인을 재사용한다. Codex 자식 프로세스는 저장 로그인과 실행에 필요한 경로·언어·인증서·무자격 프록시 환경만 허용하고 나머지 부모 환경을 제거한다.
+- 모델과 `model_reasoning_effort`는 기본적으로 사용자의 Codex 설정을 상속한다. 명시적 실행 설정이 있을 때만 CLI 인자로 재정의한다.
+- 모델 이름은 OML 허용 목록으로 고정하지 않는다. 문자열·제어문자 경계만 검증하고 실제 계정 가용성은 공식 CLI가 판정한다.
+- 입력은 셸 인자가 아니라 표준입력 JSON으로 전달하고, 명령은 `ProcessBuilder` 인자 목록으로 구성한다.
+- Codex는 `.git`, `.oml`, 민감 파일과 빌드 산출물을 제외한 임시 사본을 기본 작업공간으로 사용하고 셸 샌드박스를 `read-only`로 고정한다. `.git` 없는 사본이므로 `--skip-git-repo-check`를 사용한다. 이는 원본 쓰기 방어이지 Codex 설정·MCP·웹까지 막는 읽기 격리는 아니다.
+- `turn.completed.usage`의 입력·캐시 입력·출력·추론 출력 토큰을 파싱한다. 정책용 전체 기록 토큰은 하위 항목을 중복 합산하지 않고 입력과 출력만 더한다.
+- 완료 결과는 요청과 OML 런타임 설정 지문에 결속해 `.oml/runtime/codex/invocations/`에 원자적으로 저장한다. JVM 락과 운영체제 파일 락으로 같은 논리 호출의 동시 중복 실행을 막는다. 상속한 실제 모델·추론 값과 CLI 버전은 지문에 없으므로 외부 설정 변경 후에는 새 호출 ID가 필요하다.
+- 제공자 stderr와 예외 원문은 영속화하지 않고 허용된 `AiFailureCode`로만 변환한다.
 
 ## 초기 패키지 방향
 
@@ -196,6 +220,6 @@ io.ohmyluke
 4. 범용 도구 노드 (완료)
 5. 로컬 프로젝트 스캐너 (완료)
 6. 가짜 AI 실행기 (완료)
-7. Codex CLI 실행기
+7. Codex CLI 실행기 (완료)
 8. Direct와 Loop 프리셋
 9. 정적 Workflow와 비교 실험

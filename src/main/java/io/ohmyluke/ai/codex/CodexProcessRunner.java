@@ -1,0 +1,369 @@
+package io.ohmyluke.ai.codex;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.LockSupport;
+
+final class CodexProcessRunner {
+    private static final Set<String> ALLOWED_ENVIRONMENT = Set.of(
+            "PATH",
+            "HOME",
+            "USERPROFILE",
+            "CODEX_HOME",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "LANG",
+            "LANGUAGE",
+            "LC_ALL",
+            "LC_CTYPE",
+            "TZ",
+            "SYSTEMROOT",
+            "WINDIR",
+            "COMSPEC",
+            "PATHEXT",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "NODE_EXTRA_CA_CERTS",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY");
+
+    CodexProcessResult run(
+            List<String> command,
+            Path workingDirectory,
+            byte[] input,
+            Duration timeout,
+            int outputLimit) {
+        Process process;
+        try {
+            ProcessBuilder builder = new ProcessBuilder(command)
+                    .directory(workingDirectory.toFile());
+            restrictEnvironment(builder.environment());
+            process = builder.start();
+        } catch (IOException error) {
+            return new CodexProcessResult(false, false, -1, "", "", false, false);
+        }
+
+        ExecutorService tasks = Executors.newVirtualThreadPerTaskExecutor();
+        Set<ProcessHandle> descendants = ConcurrentHashMap.newKeySet();
+        try {
+            OutputCapture standardOutputCapture = new OutputCapture(outputLimit);
+            OutputCapture standardErrorCapture = new OutputCapture(outputLimit);
+            Future<?> stdout = tasks.submit(
+                    () -> capture(process.getInputStream(), standardOutputCapture));
+            Future<?> stderr = tasks.submit(
+                    () -> capture(process.getErrorStream(), standardErrorCapture));
+            CountDownLatch observerReady = new CountDownLatch(1);
+            Future<?> descendantObserver = tasks.submit(
+                    () -> observeDescendants(process, descendants, observerReady));
+            awaitObserverReady(observerReady);
+            Future<Boolean> inputWritten = tasks.submit(() -> writeInput(process, input));
+            boolean completed = waitFor(process, timeout, descendants);
+            if (!completed) {
+                terminateTree(process, descendants);
+            }
+            awaitDescendantObserver(descendantObserver);
+            terminateDescendants(process, descendants);
+            closeQuietly(process.getOutputStream());
+            boolean writeSucceeded = awaitWrite(inputWritten);
+            closeProcessStreams(process);
+            CapturedOutput standardOutput = awaitOutput(stdout, standardOutputCapture);
+            CapturedOutput standardError = awaitOutput(stderr, standardErrorCapture);
+            int exitCode = completed ? process.exitValue() : -1;
+            return new CodexProcessResult(
+                    true,
+                    !completed,
+                    exitCode,
+                    standardOutput.text(),
+                    standardError.text(),
+                    standardOutput.truncated() || standardError.truncated(),
+                    !writeSucceeded);
+        } finally {
+            if (process.isAlive()) {
+                terminateTree(process, descendants);
+            }
+            closeProcessStreams(process);
+            tasks.shutdownNow();
+        }
+    }
+
+    private static void observeDescendants(
+            Process process,
+            Set<ProcessHandle> descendants,
+            CountDownLatch ready) {
+        ready.countDown();
+        while (process.isAlive()) {
+            process.descendants().forEach(descendants::add);
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+            if (Thread.interrupted()) {
+                return;
+            }
+        }
+        process.descendants().forEach(descendants::add);
+    }
+
+    private static void awaitObserverReady(CountDownLatch ready) {
+        try {
+            ready.await(1, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void awaitDescendantObserver(Future<?> observer) {
+        try {
+            observer.get(1, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException error) {
+            observer.cancel(true);
+        }
+    }
+
+    private static boolean waitFor(
+            Process process,
+            Duration timeout,
+            Set<ProcessHandle> descendants) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        try {
+            while (process.isAlive()) {
+                process.descendants().forEach(descendants::add);
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                long slice = Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(25));
+                process.waitFor(slice, TimeUnit.NANOSECONDS);
+            }
+            process.descendants().forEach(descendants::add);
+            return true;
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private static boolean writeInput(Process process, byte[] input) {
+        try (OutputStream output = process.getOutputStream()) {
+            output.write(input);
+            output.flush();
+            return true;
+        } catch (IOException error) {
+            return false;
+        }
+    }
+
+    private static void capture(InputStream input, OutputCapture output) {
+        byte[] buffer = new byte[8192];
+        int read;
+        try {
+            while ((read = input.read(buffer)) >= 0) {
+                output.append(buffer, read);
+            }
+        } catch (IOException ignored) {
+            // Closing the parent-side stream after process exit bounds orphaned pipe readers.
+        }
+    }
+
+    private static void closeProcessStreams(Process process) {
+        closeQuietly(process.getOutputStream());
+        closeQuietly(process.getInputStream());
+        closeQuietly(process.getErrorStream());
+    }
+
+    private static void closeQuietly(AutoCloseable stream) {
+        try {
+            stream.close();
+        } catch (Exception ignored) {
+            // Process completion and the structured result remain authoritative.
+        }
+    }
+
+    private static CapturedOutput awaitOutput(Future<?> future, OutputCapture capture) {
+        try {
+            future.get(250, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException error) {
+            future.cancel(true);
+        }
+        return capture.snapshot();
+    }
+
+    private static boolean awaitWrite(Future<Boolean> future) {
+        try {
+            return future.get(1, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException | TimeoutException error) {
+            future.cancel(true);
+            return false;
+        }
+    }
+
+    private static void terminateTree(Process process, Set<ProcessHandle> observedDescendants) {
+        terminateDescendants(process, observedDescendants);
+        process.destroyForcibly();
+        try {
+            process.waitFor(5, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void terminateDescendants(
+            Process process,
+            Set<ProcessHandle> observedDescendants) {
+        process.descendants().forEach(observedDescendants::add);
+        List<ProcessHandle> descendants = new ArrayList<>(observedDescendants);
+        for (int index = descendants.size() - 1; index >= 0; index--) {
+            ProcessHandle descendant = descendants.get(index);
+            if (descendant.isAlive()) {
+                descendant.destroyForcibly();
+            }
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        for (ProcessHandle descendant : descendants) {
+            awaitTermination(descendant, deadline);
+        }
+    }
+
+    private static void awaitTermination(ProcessHandle process, long deadline) {
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) {
+            return;
+        }
+        try {
+            process.onExit().get(remaining, TimeUnit.NANOSECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException ignored) {
+            // The caller still returns a bounded, sanitized failure or result.
+        }
+    }
+
+    static void restrictEnvironment(Map<String, String> environment) {
+        environment.entrySet().removeIf(entry -> {
+            String name = entry.getKey().toUpperCase(Locale.ROOT);
+            if (!ALLOWED_ENVIRONMENT.contains(name)) {
+                return true;
+            }
+            return isProxyVariable(name) && !isCredentialFreeProxy(entry.getValue());
+        });
+    }
+
+    private static boolean isProxyVariable(String name) {
+        return name.equals("HTTP_PROXY")
+                || name.equals("HTTPS_PROXY")
+                || name.equals("ALL_PROXY");
+    }
+
+    private static boolean isCredentialFreeProxy(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            URI proxy = new URI(value.contains("://") ? value : "http://" + value);
+            String scheme = proxy.getScheme() == null
+                    ? ""
+                    : proxy.getScheme().toLowerCase(Locale.ROOT);
+            boolean supportedScheme = scheme.equals("http")
+                    || scheme.equals("https")
+                    || scheme.equals("socks")
+                    || scheme.equals("socks5")
+                    || scheme.equals("socks5h");
+            String path = proxy.getRawPath();
+            return supportedScheme
+                    && proxy.getHost() != null
+                    && proxy.getRawUserInfo() == null
+                    && hasValidPort(proxy)
+                    && (path == null || path.isEmpty() || path.equals("/"))
+                    && proxy.getRawQuery() == null
+                    && proxy.getRawFragment() == null;
+        } catch (URISyntaxException error) {
+            return false;
+        }
+    }
+
+    private static boolean hasValidPort(URI proxy) {
+        String authority = proxy.getRawAuthority();
+        if (authority == null) {
+            return false;
+        }
+        boolean explicitPort;
+        if (authority.startsWith("[")) {
+            int closingBracket = authority.indexOf(']');
+            if (closingBracket < 0) {
+                return false;
+            }
+            String suffix = authority.substring(closingBracket + 1);
+            explicitPort = !suffix.isEmpty();
+            if (explicitPort && (!suffix.startsWith(":") || suffix.length() == 1)) {
+                return false;
+            }
+        } else {
+            int colon = authority.lastIndexOf(':');
+            explicitPort = colon >= 0;
+            if (explicitPort && colon == authority.length() - 1) {
+                return false;
+            }
+        }
+        int port = proxy.getPort();
+        return !explicitPort || (port >= 1 && port <= 65535);
+    }
+
+    private record CapturedOutput(String text, boolean truncated) {}
+
+    private static final class OutputCapture {
+        private final int limit;
+        private final ByteArrayOutputStream output;
+        private int total;
+        private boolean truncated;
+
+        private OutputCapture(int limit) {
+            this.limit = limit;
+            this.output = new ByteArrayOutputStream(Math.min(limit, 8192));
+        }
+
+        private synchronized void append(byte[] buffer, int length) {
+            int remaining = limit - total;
+            if (remaining > 0) {
+                int copied = Math.min(remaining, length);
+                output.write(buffer, 0, copied);
+                total += copied;
+            }
+            if (length > remaining) {
+                truncated = true;
+            }
+        }
+
+        private synchronized CapturedOutput snapshot() {
+            return new CapturedOutput(output.toString(StandardCharsets.UTF_8), truncated);
+        }
+    }
+}

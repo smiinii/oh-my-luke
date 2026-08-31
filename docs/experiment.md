@@ -24,7 +24,9 @@ Open-world isolated-arms benchmark를 사용한다.
 - 동일 실패 반복률
 - 체크포인트 복구 성공률
 
-Codex 토큰은 실행별 로컬 세션의 `token_count` 이벤트에서 수집한다. 로그 스키마를 알 수 없으면 추정하지 않고 지원하지 않는 형식으로 처리한다.
+Codex 비대화형 실행의 주 측정값은 `codex exec --json`이 내보내는 `turn.completed.usage`에서 수집한다. 입력, 캐시 입력, 출력, 추론 출력 토큰을 분리하고 전체 기록 토큰은 입력과 출력만 더해 하위 항목을 중복 계산하지 않는다. 필드가 없거나 로그 스키마를 알 수 없으면 응답 성공 여부는 보존하되 사용량만 `unavailable`로 처리한다.
+
+로컬 세션의 `token_count` 이벤트 수집기는 향후 대화형 기준선이나 교차 검증이 필요할 때 추가한다. OML 어댑터는 `--ephemeral` JSONL에서 직접 측정하므로 세션 파일 추측에 의존하지 않는다. 최종 비교에서 Baseline과 OML은 같은 Codex 실행 방식, 모델과 reasoning 설정을 사용해야 한다.
 
 ## 결과 공개 원칙
 
