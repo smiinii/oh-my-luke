@@ -24,6 +24,8 @@ Core constraints:
 - Never claim token savings without reproducible benchmark evidence.
 - Keep Baseline and OML benchmark arms mutually isolated while giving both the same external capabilities.
 - After completing a milestone, add a concise numbered Markdown file under `docs/how-it-works/` and link it from `docs/how-it-works/README.md`. Explain the flow, purpose, verification evidence, and current limitations for non-programmers. Do not turn it into a class-by-class code reference.
+- Keep `docs/architecture.md` as an approximately 100-line overview and reading map. Update the relevant topic document instead of appending milestone implementation details; preserve unique technical evidence when reorganizing.
+- Read `docs/architecture/core-runtime.md` for graph execution, checkpoint, recovery, or policy-counter changes. Other topic documents remain selective context, not a mandatory reading chain.
 
 Benchmark isolation:
 
