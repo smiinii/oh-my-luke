@@ -45,12 +45,12 @@ Auto는 AI에게 “어떤 모드가 좋을까?”를 묻지 않는다. Java가 
 
 - 선택 규칙: 같은 명시 조건이면 같은 모드·이유, 승인/선언 우선, 한도 증가 없음
 - 수동 선택: Direct 시도 1회, Loop 한도 유지, Workflow 승인·경로 보존
-- 입력 경계: 잘못된 옵션과 작업표 거부, 비대화형 무선택 오류, 취소·EOF에 실행 없음
+- 입력 경계: 잘못된 옵션과 작업표 거부, 실제 파일 동일성으로 작업표·검증기 별칭 보호, 비대화형 무선택 오류, 취소·EOF에 실행 없음
 - 저장·재개: 원본 작업표가 바뀌어도 확정 선택 유지, 별도 JVM의 실제 CLI로 승인·재개해도 메뉴나 Auto 재선택 없음
 - 실행 연결: 기존 그래프 커널·가짜 AI로 성공·실패·승인 대기 흐름 검증
 - 예제: 저장소의 시작용 JSON을 테스트로 읽어 실제 입력 형식 검증
 
-관련 테스트는 `preset/Start*Test`, `cli/StartPromptTest`, `cli/StartCliTest`, `cli/StartProcessTest`다. 실제 AI 없는 테스트는 제어 흐름을 확인하며, 특정 Codex 버전의 실제 연결이나 토큰 절감 효과를 입증하지 않는다.
+관련 테스트는 `preset/Start*Test`, `preset/OperatorFileGuardTest`, `cli/StartPromptTest`, `cli/StartCliTest`, `cli/StartProcessTest`다. 실제 AI 없는 테스트는 제어 흐름을 확인하며, 특정 Codex 버전의 실제 연결이나 토큰 절감 효과를 입증하지 않는다.
 
 ## 현재 제한
 

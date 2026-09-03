@@ -34,8 +34,10 @@ public final class StartRunService {
             throw new IllegalArgumentException("cannot read bounded start file");
         }
         StartSpec spec = PresetJson.decode(new String(input.content(), StandardCharsets.UTF_8), StartSpec.class);
-        boolean editsContract = spec.task() != null ? spec.task().file().equals(relativePath)
-                : spec.workflow().steps().stream().anyMatch(step -> step.task() != null && step.task().file().equals(relativePath));
+        Path contract = project.resolve(relativePath);
+        boolean editsContract = spec.task() != null ? OperatorFileGuard.sameFile(project.resolve(spec.task().file()), contract)
+                : spec.workflow().steps().stream().anyMatch(step -> step.task() != null
+                        && OperatorFileGuard.sameFile(project.resolve(step.task().file()), contract));
         if (editsContract) { throw new IllegalArgumentException("start contract cannot be the editable target"); }
         return spec;
     }

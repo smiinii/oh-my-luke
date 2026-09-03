@@ -136,6 +136,19 @@ class StartRunServiceTest {
         assertTrue(ai.requests.isEmpty());
     }
 
+    @Test void caseAliasesCannotMakeTheStartContractAnEditableTarget() throws Exception {
+        ScriptedAi ai = new ScriptedAi("ready");
+        Path alias = project.resolve("HELLO.TXT");
+        for (StartSpec input : List.of(new StartSpec(1, task(3, false), null), new StartSpec(1, null, workflow()))) {
+            Files.writeString(project.resolve("hello.txt"), PresetJson.encode(input));
+            org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(alias), "requires a case-insensitive filesystem");
+            assertTrue(Files.isSameFile(alias, project.resolve("hello.txt")));
+            assertThrows(IllegalArgumentException.class, () -> service(ai, allow).readSpec(Path.of("HELLO.TXT")));
+        }
+        assertTrue(ai.requests.isEmpty());
+        assertFalse(Files.exists(project.resolve(".oml")));
+    }
+
     @Test void generatedWorkflowCanReachTheTwentiethAttemptWithEveryApprovalPreserved() throws Exception {
         Files.writeString(project.resolve("hello.txt"), "old");
         List<String> responses = new ArrayList<>();
@@ -155,6 +168,41 @@ class StartRunServiceTest {
         assertEquals(20, ai.requests.size());
         assertEquals(120, checkpoints().load("twenty").checkpoint().state().executedSteps());
         assertEquals(plan.selection(), savedSelection("twenty"));
+    }
+
+    @Test void legacyContractReadersAlsoRejectCaseAliases() throws Exception {
+        ScriptedAi ai = new ScriptedAi("ready");
+        Files.writeString(project.resolve("hello.txt"), PresetJson.encode(task(1, false).toTask(ExecutionMode.DIRECT)));
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(project.resolve("HELLO.TXT")), "requires a case-insensitive filesystem");
+        assertThrows(IllegalArgumentException.class, () -> presets(ai, allow).readTask(Path.of("HELLO.TXT")));
+        Files.writeString(project.resolve("hello.txt"), PresetJson.encode(workflow()));
+        assertThrows(IllegalArgumentException.class, () -> workflows(ai, allow).readSpec(Path.of("HELLO.TXT")));
+        assertTrue(ai.requests.isEmpty());
+        assertFalse(Files.exists(project.resolve(".oml")));
+    }
+
+    @Test void validatorCaseAliasesAreRejectedBeforeEveryStartMode() throws Exception {
+        Files.writeString(project.resolve("hello.txt"), "operator validator");
+        Path alias = project.resolve("HELLO.TXT");
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(alias), "requires a case-insensitive filesystem");
+        ValidationSpec validation = new ValidationSpec(List.of(), List.of(),
+                new ValidationCommand(alias.toString(), List.of(), 0, 1_000));
+        StartSpec input = new StartSpec(1, new StartTaskSpec("Make ready", "hello.txt", 3,
+                0, 60_000, 3, validation, null, null, false), null);
+        ScriptedAi ai = new ScriptedAi("ready");
+        for (StartChoice choice : StartChoice.values()) {
+            String id = "alias-validator-" + choice.name().toLowerCase(java.util.Locale.ROOT);
+            assertThrows(IllegalArgumentException.class, () -> service(ai, allow).start(id, StartModeSelector.select(input, choice)));
+        }
+        assertThrows(IllegalArgumentException.class, () -> presets(ai, allow).start("legacy", input.task().toTask(ExecutionMode.DIRECT)));
+        WorkflowSpec declared = new WorkflowSpec(1, "Keep every validator fixed", "edit", List.of(
+                WorkflowStep.edit("edit", new StartTaskSpec("Edit", "hello.txt", 1, 0, 60_000, 1,
+                        validation(), null, null, false).toTask(ExecutionMode.DIRECT), false, "check", "stopped"),
+                WorkflowStep.check("check", "other.txt", validation, "succeeded", "stopped")), 20, 0, 60_000);
+        assertThrows(IllegalArgumentException.class, () -> workflows(ai, allow).start("cross-step", declared));
+        assertTrue(ai.requests.isEmpty());
+        assertFalse(Files.exists(project.resolve(".oml")));
+        assertEquals("operator validator", Files.readString(project.resolve("hello.txt")));
     }
 
     @Test void selectingWorkflowCannotTurnTheEditableFileIntoItsOwnValidator() {

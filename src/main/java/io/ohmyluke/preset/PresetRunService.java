@@ -43,8 +43,8 @@ public final class PresetRunService {
 
     private void startInternal(String runId, TaskSpec task, RunSelection selection) {
         Objects.requireNonNull(task, "task");
-        if (task.validation().command() != null && Path.of(task.validation().command().executable())
-                .toAbsolutePath().normalize().equals(project.resolve(task.file()).toAbsolutePath().normalize())) {
+        if (task.validation().command() != null && OperatorFileGuard.sameFile(
+                Path.of(task.validation().command().executable()), project.resolve(task.file()))) {
             throw new IllegalArgumentException("the editable file cannot be the validator executable");
         }
         Map<String, String> initial = selection == null
@@ -67,7 +67,7 @@ public final class PresetRunService {
             throw new IllegalArgumentException("cannot read bounded task file");
         }
         TaskSpec task = PresetJson.decode(new String(input.content(), java.nio.charset.StandardCharsets.UTF_8), TaskSpec.class);
-        if (task.file().equals(path.toString())) {
+        if (OperatorFileGuard.sameFile(project.resolve(task.file()), project.resolve(path))) {
             throw new IllegalArgumentException("task contract cannot be the editable target");
         }
         return task;
