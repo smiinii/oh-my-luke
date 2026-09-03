@@ -88,7 +88,7 @@ codex exec --json --ephemeral
 
 JSONL에서 최종 에이전트 메시지, Codex 세션 ID와 `turn.completed.usage`를 읽는다. 캐시 입력과 추론 출력은 각각 입력·출력의 하위 항목으로 별도 기록하고, 정책용 전체 기록 토큰은 입력과 출력만 더한다. 사용량 필드가 일부 없거나 알 수 없는 스키마이면 응답 성공은 보존하고 사용량만 `unavailable`로 둔다.
 
-완료 결과는 요청·OML 런타임 설정 지문에 결속해 OML 내부에 저장한다. 같은 논리 호출은 저장 결과를 재사용하고 다른 요청이나 OML의 명시적 모델 설정이 같은 ID를 사용하면 실행 전에 거부한다. `inherit`의 실제 모델·추론 값과 CLI 버전은 공식 CLI 내부 값이라 지문에 포함되지 않으므로, 사용자가 그 외부 값을 바꾼 뒤 새 응답을 원하면 새 논리 호출 ID를 사용해야 한다. 저장된 로그인과 실제 AI를 쓰는 통합 테스트는 `OML_CODEX_INTEGRATION=true`일 때만 실행되며 기본 CI에서는 비활성화된다.
+완료 결과는 요청·OML 런타임 설정 지문에 결속해 OML 내부에 저장한다. 같은 논리 호출은 저장 결과를 재사용하고 다른 요청이나 OML의 명시적 모델 설정이 같은 ID를 사용하면 실행 전에 거부한다. `inherit`의 실제 모델·추론 값과 CLI 버전은 공식 CLI 내부 값이라 지문에 포함되지 않으므로, 사용자가 그 외부 값을 바꾼 뒤 새 응답을 원하면 새 논리 호출 ID를 사용해야 한다. 런타임·프리셋 실제 AI 테스트는 `OML_CODEX_INTEGRATION=true`, [Workflow 실제 AI 테스트](workflow-verification.md)는 별도 `OML_WORKFLOW_CODEX_INTEGRATION=true`로 켠다. 기본 테스트와 CI에서는 모두 비활성화된다.
 
 저장 위치는 `.oml/runtime/codex/invocations/`다. 원자적 파일 교체와 JVM·운영체제 파일 잠금으로 같은 논리 호출의 동시 중복 실행을 막는다. 제공자 stderr·예외 원문은 저장하지 않고 안전한 실패 코드로만 분류한다.
 
