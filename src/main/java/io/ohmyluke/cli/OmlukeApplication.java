@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.time.Duration;
 import io.ohmyluke.preset.PresetRunService;
 import io.ohmyluke.preset.WorkflowRunService;
+import io.ohmyluke.preset.StartRunService;
 import io.ohmyluke.preset.TaskSpec;
 import io.ohmyluke.ai.AiRuntime;
 import io.ohmyluke.ai.codex.CodexCliConfiguration;
@@ -57,8 +58,9 @@ public final class OmlukeApplication {
                 permissions, sandbox, Clock.systemUTC());
         WorkflowRunService workflows = new WorkflowRunService(Path.of(""), runtimeFactory,
                 permissions, sandbox, Clock.systemUTC());
+        StartRunService starts = new StartRunService(Path.of(""), presets, workflows, permissions, Clock.systemUTC());
         int exitCode = new OmlukeCli(runs, GraphResolver.none(), permissions, System.out, System.err,
-                presets, workflows)
+                presets, workflows, starts, StartPrompt.system())
                 .execute(args);
         if (exitCode != 0) {
             System.exit(exitCode);

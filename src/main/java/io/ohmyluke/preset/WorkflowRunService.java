@@ -46,6 +46,15 @@ public final class WorkflowRunService {
     }
 
     public void start(String runId, WorkflowSpec spec) {
+        startInternal(runId, spec, null);
+    }
+
+    public void start(String runId, WorkflowSpec spec, RunSelection selection) {
+        new StartPlan(selection, null, spec);
+        startInternal(runId, spec, selection);
+    }
+
+    private void startInternal(String runId, WorkflowSpec spec, RunSelection selection) {
         Objects.requireNonNull(spec);
         String encoded = PresetJson.encode(spec);
         if (encoded.getBytes(StandardCharsets.UTF_8).length > 512 * 1024) {
@@ -60,7 +69,9 @@ public final class WorkflowRunService {
                 throw new IllegalArgumentException("an editable file cannot be a workflow validator executable");
             }
         }
-        runs(spec).start(runId, graph(runId, spec), Map.of(SPEC, encoded, "workflow.status", "RUNNING"),
+        Map<String, String> initial = selection == null ? Map.of(SPEC, encoded, "workflow.status", "RUNNING")
+                : Map.of(SPEC, encoded, "workflow.status", "RUNNING", RunSelection.STATE_KEY, PresetJson.encode(selection));
+        runs(spec).start(runId, graph(runId, spec), initial,
                 new HandoffNote(spec.goal(), List.of("mode=WORKFLOW", "static declaration and budget fixed at start"),
                         List.of(), List.of(), List.of("Approval gates do not grant tool permissions"), "omluke inspect " + runId));
     }

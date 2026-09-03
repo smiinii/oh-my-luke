@@ -33,13 +33,25 @@ public final class PresetRunService {
     }
 
     public void start(String runId, TaskSpec task) {
+        startInternal(runId, task, null);
+    }
+
+    public void start(String runId, TaskSpec task, RunSelection selection) {
+        new StartPlan(selection, task, null);
+        startInternal(runId, task, selection);
+    }
+
+    private void startInternal(String runId, TaskSpec task, RunSelection selection) {
         Objects.requireNonNull(task, "task");
         if (task.validation().command() != null && Path.of(task.validation().command().executable())
                 .toAbsolutePath().normalize().equals(project.resolve(task.file()).toAbsolutePath().normalize())) {
             throw new IllegalArgumentException("the editable file cannot be the validator executable");
         }
-        runs(task).start(runId, graph(runId, task), Map.of(PresetGraph.TASK, PresetJson.encode(task),
-                        "preset.status", PresetStatus.RUNNING.name()),
+        Map<String, String> initial = selection == null
+                ? Map.of(PresetGraph.TASK, PresetJson.encode(task), "preset.status", PresetStatus.RUNNING.name())
+                : Map.of(PresetGraph.TASK, PresetJson.encode(task), "preset.status", PresetStatus.RUNNING.name(),
+                        RunSelection.STATE_KEY, PresetJson.encode(selection));
+        runs(task).start(runId, graph(runId, task), initial,
                 new HandoffNote(task.goal(), List.of("mode=" + task.mode(), "contract is fixed for this run"),
                         List.of(), List.of(), List.of("Do not change the validation or permission policy"),
                         "omluke resume " + runId));
