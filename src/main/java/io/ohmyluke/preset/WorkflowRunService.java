@@ -39,13 +39,23 @@ public final class WorkflowRunService {
                 .execute(FileToolRequest.read("workflow-input", path));
         if (!input.executed() || input.content().length > 512 * 1024) { throw new IllegalArgumentException("cannot read bounded workflow file"); }
         WorkflowSpec spec = PresetJson.decode(new String(input.content(), StandardCharsets.UTF_8), WorkflowSpec.class);
-        if (spec.steps().stream().anyMatch(step -> step.task() != null && step.task().file().equals(path.toString()))) {
+        if (spec.steps().stream().anyMatch(step -> step.task() != null
+                && OperatorFileGuard.sameFile(project.resolve(step.task().file()), project.resolve(path)))) {
             throw new IllegalArgumentException("workflow contract cannot be the editable target");
         }
         return spec;
     }
 
     public void start(String runId, WorkflowSpec spec) {
+        startInternal(runId, spec, null);
+    }
+
+    public void start(String runId, WorkflowSpec spec, RunSelection selection) {
+        new StartPlan(selection, null, spec);
+        startInternal(runId, spec, selection);
+    }
+
+    private void startInternal(String runId, WorkflowSpec spec, RunSelection selection) {
         Objects.requireNonNull(spec);
         String encoded = PresetJson.encode(spec);
         if (encoded.getBytes(StandardCharsets.UTF_8).length > 512 * 1024) {
@@ -55,12 +65,14 @@ public final class WorkflowRunService {
                 .map(step -> project.resolve(step.task().file()).toAbsolutePath().normalize()).collect(java.util.stream.Collectors.toSet());
         for (WorkflowStep step : spec.steps()) {
             ValidationSpec validation = step.task() == null ? step.validation() : step.task().validation();
-            if (validation != null && validation.command() != null
-                    && targets.contains(Path.of(validation.command().executable()).toAbsolutePath().normalize())) {
+            if (validation != null && validation.command() != null && targets.stream().anyMatch(target ->
+                    OperatorFileGuard.sameFile(target, Path.of(validation.command().executable())))) {
                 throw new IllegalArgumentException("an editable file cannot be a workflow validator executable");
             }
         }
-        runs(spec).start(runId, graph(runId, spec), Map.of(SPEC, encoded, "workflow.status", "RUNNING"),
+        Map<String, String> initial = selection == null ? Map.of(SPEC, encoded, "workflow.status", "RUNNING")
+                : Map.of(SPEC, encoded, "workflow.status", "RUNNING", RunSelection.STATE_KEY, PresetJson.encode(selection));
+        runs(spec).start(runId, graph(runId, spec), initial,
                 new HandoffNote(spec.goal(), List.of("mode=WORKFLOW", "static declaration and budget fixed at start"),
                         List.of(), List.of(), List.of("Approval gates do not grant tool permissions"), "omluke inspect " + runId));
     }

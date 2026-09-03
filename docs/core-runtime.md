@@ -103,6 +103,8 @@ FileToolNode / ProcessToolNode
 
 독립 CLI는 저장된 `TaskSpec` 또는 `WorkflowSpec`으로 같은 그래프를 재구성한다. 임의 Java 노드 그래프는 `GraphResolver` 등록이 필요하다. `inspect`와 `cancel`은 그래프 재구성이 필요 없으며, 사용 절차와 제한은 [프리셋](preset-usage.md)과 [Workflow 사용법](workflow-usage.md)을 따른다.
 
+`start`로 만든 실행은 확정 작업표와 같은 상태의 `execution.selection`에 선택 방식·모드·이유·규칙 버전을 저장한다. `inspect`·`resume`은 저장 선택을 읽고 메뉴나 Auto 규칙을 다시 실행하지 않는다. 입력과 선택 계약은 [시작 사용법](start-usage.md)에 있다.
+
 - [그래프 테스트](../src/test/java/io/ohmyluke/graph/): 조건 선택·잘못된 그래프·단계 제한
 - [상태 저장 테스트](../src/test/java/io/ohmyluke/state/): 스키마·서명·원자적 저장·손상·로그·권한 저장
 - [관리 실행 테스트](../src/test/java/io/ohmyluke/runtime/ManagedRunServiceTest.java): 중단·재개·정책 연결

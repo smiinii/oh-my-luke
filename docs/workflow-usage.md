@@ -89,4 +89,4 @@ omluke resume edit-demo
 
 가짜 AI 테스트는 OML의 제어 흐름을 검증하며 실제 모델 품질 실험이 아니다. 실제 Codex 단일 파일 연결 근거는 [기존 마일스톤 8](how-it-works/08-direct-and-loop.md)을 유지한다. Workflow의 별도 JVM·실제 Codex 통합 검증은 [실연동 검증 기록](workflow-verification.md)에 재현 명령과 결과를 남긴다. 기본 테스트/CI에서는 실제 AI를 호출하지 않는다.
 
-Auto 모드·자동 컨텍스트·동적/병렬 그래프·벤치마크·공개 배포는 남아 있다. 운영체제별 파일/프로세스·Codex 경계와 exactly-once 한계는 [보안](security.md)과 [Direct/Loop 사용법](preset-usage.md)의 제한을 그대로 따른다.
+명시 조건에 따른 Auto·수동 선택은 [공통 시작 명령](start-usage.md)에서 제공한다. 자동 컨텍스트·동적/병렬 그래프·벤치마크·공개 배포는 이번 Workflow 범위 밖이다. 운영체제별 파일/프로세스·Codex 경계와 exactly-once 한계는 [보안](security.md)과 [Direct/Loop 사용법](preset-usage.md)의 제한을 그대로 따른다.

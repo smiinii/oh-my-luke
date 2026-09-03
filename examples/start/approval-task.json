@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "task": {
+    "goal": "Replace hello.txt with one line: OML_READY",
+    "file": "hello.txt",
+    "maxAttempts": 3,
+    "maxUsage": 0,
+    "maxElapsedMillis": 3600000,
+    "maxRepeatedFailures": 2,
+    "validation": {
+      "requiredText": ["OML_READY"],
+      "forbiddenText": ["old"],
+      "command": null
+    },
+    "model": null,
+    "reasoning": null,
+    "approvalBeforeApply": true
+  },
+  "workflow": null
+}
