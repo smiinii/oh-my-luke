@@ -46,6 +46,8 @@ OML은 이제 여러 단계를 **미리 정한 경로**로 연결할 수 있다.
 
 테스트 위치는 `preset/Workflow*Test`, `runtime/ManagedApprovalTest`, `cli/WorkflowCliTest`, `state/CheckpointCodecTest`다. 실제 AI 없이 검증한 것은 OML의 제어 흐름이며 모델의 응답 품질이 아니다.
 
+2026-09-03에는 실제 Codex와 별도 JVM으로도 선검사 통과 0회 호출, 승인 후 적용·재개, 거부·외부 변경 차단을 확인했다. 실제 호출은 세 경우에 1회씩, 재개 시 추가 호출은 0회였다. [실연동 검증 기록](../workflow-verification.md)에 재현 명령·토큰 수·관측 한계를 남겼다. 작은 기능 연결 검증이지 일반적인 토큰 절감 효과의 입증은 아니다.
+
 ## 아직 남아 있는 것
 
 사용자가 작은 선언형 JSON을 준비해야 한다. 자연어만으로 그래프를 생성하거나 실행 중 AI가 단계 구조를 바꾸지는 않는다. 명시 조건에 따른 Auto·수동 선택은 [다음 마일스톤](10-auto-and-manual-start.md)에 연결했다. 자동 컨텍스트·병렬 실행·비교 실험·공개 배포는 후속이다.
