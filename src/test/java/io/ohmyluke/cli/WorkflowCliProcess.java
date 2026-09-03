@@ -21,15 +21,23 @@ final class WorkflowCliProcess {
     private final Path realCodex;
 
     WorkflowCliProcess(Path directory, boolean live) throws Exception {
+        this(directory, live ? findCodex() : null);
+    }
+
+    /** Explicit delegate supports testing the forwarding cap without a real provider. */
+    WorkflowCliProcess(Path directory, Path delegateExecutable) throws Exception {
         project = Files.createDirectory(directory.resolve("project"));
         evidence = Files.createDirectory(directory.resolve("evidence"));
         shimDirectory = Files.createDirectory(directory.resolve("bin"));
         launches = evidence.resolve("codex-exec-launches.txt");
-        realCodex = live ? findCodex() : null;
-        String delegate = live ? "exec " + quote(realCodex.toString()) + " \"$@\"\n" : "exit 97\n";
+        realCodex = delegateExecutable;
+        String delegate = realCodex != null ? "exec " + quote(realCodex.toString()) + " \"$@\"\n" : "exit 97\n";
         Path shim = shimDirectory.resolve("codex");
         Files.writeString(shim, "#!/bin/sh\nif [ \"$1\" = exec ]; then\n  printf 'exec\\n' >> "
-                + quote(launches.toString()) + " || exit 98\nfi\n" + delegate);
+                + quote(launches.toString()) + " || exit 98\n"
+                // Atomic no-clobber marker: even a retry regression cannot forward a second exec.
+                + "  (set -C; : > " + quote(evidence.resolve("first-exec").toString()) + ") 2>/dev/null || exit 96\n"
+                + "fi\n" + delegate);
         Files.setPosixFilePermissions(shim, PosixFilePermissions.fromString("rwx------"));
     }
 
@@ -59,7 +67,7 @@ final class WorkflowCliProcess {
         try (var lines = Files.lines(launches)) { return lines.count(); }
     }
 
-    private Result run(List<String> command, boolean useShim) throws Exception {
+    Result run(List<String> command, boolean useShim) throws Exception {
         Path output = Files.createTempFile(evidence, "cli-", ".txt");
         ProcessBuilder builder = new ProcessBuilder(command).directory(project.toFile())
                 .redirectErrorStream(true).redirectOutput(output.toFile());
