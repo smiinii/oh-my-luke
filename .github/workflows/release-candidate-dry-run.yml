@@ -1,0 +1,112 @@
+name: Release candidate dry run
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release-candidate-dry-run.yml"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradle/**"
+      - "gradlew"
+      - "packaging/**"
+      - "scripts/release/**"
+      - "examples/**"
+      - "src/main/**"
+      - "src/test/java/io/ohmyluke/distribution/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RC_VERSION: 0.1.0-rc.1
+
+jobs:
+  package:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            architecture: aarch64
+            machine_arch: arm64
+            classifier: macos-aarch64
+          - os: ubuntu-24.04
+            architecture: x64
+            machine_arch: x86_64
+            classifier: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21.0.12+8.0.LTS"
+          architecture: ${{ matrix.architecture }}
+      - name: Verify runner architecture
+        shell: bash
+        run: test "$(uname -m)" = "${{ matrix.machine_arch }}"
+      - name: Install bubblewrap
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Enable unprivileged user namespaces for bubblewrap tests
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build and verify release candidate package
+        run: ./gradlew clean build verifyPackagedApp -PreleaseTag="v${RC_VERSION}"
+      - name: Verify reproducible archive and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="build/package/omluke-${RC_VERSION}-${{ matrix.classifier }}.tar.gz"
+          checksum="${archive}.sha256"
+          evidence="build/package/evidence/omluke-${RC_VERSION}-${{ matrix.classifier }}.json"
+          test -f "$archive"
+          test -f "$checksum"
+          test -f "$evidence"
+          first_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          recorded_sha="$(awk '{print $1}' "$checksum")"
+          test "$first_sha" = "$recorded_sha"
+          ./gradlew packageArchive --rerun-tasks
+          second_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          test "$first_sha" = "$second_sha"
+          echo "Reproducible release candidate SHA-256: $second_sha"
+      - name: Upload verified platform asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: rc-${{ matrix.classifier }}
+          path: |
+            build/package/omluke-${{ env.RC_VERSION }}-${{ matrix.classifier }}.tar.gz
+            build/package/omluke-${{ env.RC_VERSION }}-${{ matrix.classifier }}.tar.gz.sha256
+            build/package/evidence/omluke-${{ env.RC_VERSION }}-${{ matrix.classifier }}.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  assemble:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rc-*
+          path: build/release-input
+          merge-multiple: true
+      - name: Assemble and verify release candidate bundle
+        run: scripts/release/assemble-bundle.sh "$RC_VERSION" build/release-input build/release-bundle
+      - name: Upload release candidate dry-run bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: omluke-${{ env.RC_VERSION }}-release-bundle
+          path: build/release-bundle/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

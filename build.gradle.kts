@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.WriteProperties
+
 plugins {
     application
 }
@@ -9,7 +11,7 @@ fun toNativePackageVersion(productVersion: String): String {
 }
 
 group = "io.ohmyluke"
-version = "0.1.0-SNAPSHOT"
+version = "0.1.0-rc.1"
 
 repositories {
     mavenCentral()
@@ -49,8 +51,14 @@ val packageClassifier = "$packageOs-$packageArch"
 val packageRoot = layout.buildDirectory.dir("package")
 val packageImageName = if (packageOs == "macos") "omluke.app" else "omluke"
 val packageImage = packageRoot.map { it.dir("app-image/$packageImageName") }
+val packageReleaseRootName = "omluke-${project.version}-$packageClassifier"
+val packageStagingRoot = packageRoot.map { it.dir("staging") }
+val packageReleaseRoot = packageStagingRoot.map { it.dir(packageReleaseRootName) }
 val packageArchiveFile = packageRoot.map { it.file("omluke-${project.version}-$packageClassifier.tar.gz") }
-val packageEvidence = packageRoot.map { it.file("evidence/package-evidence.json") }
+val packageChecksumFile = packageRoot.map { it.file("omluke-${project.version}-$packageClassifier.tar.gz.sha256") }
+val packageEvidence = packageRoot.map { it.file("evidence/omluke-${project.version}-$packageClassifier.json") }
+val packagePlatformFile = packageRoot.map { it.file("metadata/PLATFORM") }
+val releaseTag = providers.gradleProperty("releaseTag").orElse("v${project.version}")
 // macOS jpackage rejects versions that start with zero, so the native major is product major + 1.
 val nativePackageVersion = toNativePackageVersion(project.version.toString())
 val mainJarName = tasks.named<Jar>("jar").flatMap { it.archiveFileName }
@@ -107,19 +115,83 @@ val normalizePackageAppImage = tasks.register<Exec>("normalizePackageAppImage") 
     )
 }
 
+val cleanPackageStaging = tasks.register<Delete>("cleanPackageStaging") {
+    delete(packageStagingRoot)
+    outputs.upToDateWhen { false }
+}
+
+val writePackagePlatform = tasks.register<WriteProperties>("writePackagePlatform") {
+    group = "distribution"
+    description = "Writes the target OS and CPU architecture into the release bundle."
+    destinationFile = packagePlatformFile.get().asFile
+    encoding = "UTF-8"
+    lineSeparator = "\n"
+    property("os", packageOs)
+    property("arch", packageArch)
+}
+
+val preparePackageMetadata = tasks.register<Sync>("preparePackageMetadata") {
+    group = "distribution"
+    description = "Stages the installer, uninstaller, and product version for the release archive."
+    dependsOn(normalizePackageAppImage, cleanPackageStaging, writePackagePlatform)
+    into(packageReleaseRoot)
+    from(layout.projectDirectory.dir("packaging"))
+    from(layout.projectDirectory.dir("examples")) {
+        into("examples")
+    }
+    from(layout.projectDirectory.file("src/main/resources/io/ohmyluke/version.properties")) {
+        rename { "VERSION" }
+    }
+    from(packagePlatformFile)
+}
+
+val copyPackageImage = tasks.register<Exec>("copyPackageImage") {
+    group = "distribution"
+    description = "Copies the normalized native app image without dereferencing runtime symbolic links."
+    dependsOn(preparePackageMetadata)
+    inputs.dir(packageImage)
+    outputs.dir(packageReleaseRoot.map { it.dir(packageImageName) })
+    executable("/bin/cp")
+    args("-R", packageImage.get().asFile.absolutePath, packageReleaseRoot.get().asFile.absolutePath)
+}
+
+val makePackageScriptsExecutable = tasks.register<Exec>("makePackageScriptsExecutable") {
+    group = "distribution"
+    description = "Marks the staged lifecycle scripts as executable."
+    dependsOn(copyPackageImage)
+    executable("/bin/chmod")
+    args(
+        "755",
+        packageReleaseRoot.get().file("install.sh").asFile.absolutePath,
+        packageReleaseRoot.get().file("uninstall.sh").asFile.absolutePath
+    )
+}
+
+val normalizePackageBundle = tasks.register<Exec>("normalizePackageBundle") {
+    group = "distribution"
+    description = "Normalizes every staged release file before creating a reproducible archive."
+    dependsOn(makePackageScriptsExecutable)
+    executable("/usr/bin/find")
+    environment("TZ", "UTC")
+    args(
+        packageReleaseRoot.get().asFile.absolutePath,
+        "-exec", "/usr/bin/touch", "-h", "-t", "198001010000.00", "{}", "+"
+    )
+}
+
 val packageArchive = tasks.register<Exec>("packageArchive") {
     group = "distribution"
-    description = "Archives the self-contained OML app image while preserving symbolic links."
-    dependsOn(normalizePackageAppImage)
-    inputs.dir(packageImage)
+    description = "Archives the self-contained OML release candidate while preserving symbolic links."
+    dependsOn(normalizePackageBundle)
+    inputs.dir(packageReleaseRoot)
     outputs.file(packageArchiveFile)
     executable("/usr/bin/tar")
     environment("COPYFILE_DISABLE", "1")
     args(*archiveNormalizationArgs.toTypedArray())
     args(
         "-czf", packageArchiveFile.get().asFile.absolutePath,
-        "-C", packageRoot.get().dir("app-image").asFile.absolutePath,
-        packageImageName
+        "-C", packageStagingRoot.get().asFile.absolutePath,
+        packageReleaseRootName
     )
 }
 
@@ -131,6 +203,12 @@ tasks.withType<JavaCompile>().configureEach {
 tasks.test {
     useJUnitPlatform()
     exclude("io/ohmyluke/distribution/PackagedApplicationTest.class")
+    inputs.files(
+        layout.projectDirectory.file("packaging/install.sh"),
+        layout.projectDirectory.file("packaging/uninstall.sh"),
+        layout.projectDirectory.file("scripts/release/assemble-bundle.sh"),
+        layout.projectDirectory.file(".github/workflows/release-candidate-dry-run.yml")
+    )
     testLogging {
         events("failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
@@ -146,12 +224,20 @@ val verifyPackagedApp = tasks.register<Test>("verifyPackagedApp") {
     useJUnitPlatform()
     include("io/ohmyluke/distribution/PackagedApplicationTest.class")
     outputs.upToDateWhen { false }
+    inputs.file(packageArchiveFile)
+    inputs.dir(packageImage)
+    outputs.file(packageChecksumFile)
+    outputs.file(packageEvidence)
+    inputs.property("releaseTag", releaseTag)
     systemProperty("omluke.package.archive", packageArchiveFile.get().asFile.absolutePath)
+    systemProperty("omluke.package.checksum", packageChecksumFile.get().asFile.absolutePath)
     systemProperty("omluke.package.sourceImage", packageImage.get().asFile.absolutePath)
     systemProperty("omluke.package.imageName", packageImageName)
+    systemProperty("omluke.package.releaseRootName", packageReleaseRootName)
     systemProperty("omluke.package.os", packageOs)
     systemProperty("omluke.package.arch", packageArch)
     systemProperty("omluke.package.productVersion", project.version.toString())
+    systemProperty("omluke.package.releaseTag", releaseTag.get())
     systemProperty("omluke.package.evidence", packageEvidence.get().asFile.absolutePath)
     testLogging {
         events("failed", "skipped", "standardOut")

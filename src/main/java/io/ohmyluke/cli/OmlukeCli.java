@@ -82,6 +82,15 @@ public final class OmlukeCli {
             printUsage(out);
             return 0;
         }
+        if (args.length == 1 && (args[0].equals("--help") || args[0].equals("-h"))) {
+            out.println(OmlukeApplication.productName());
+            printUsage(out);
+            return 0;
+        }
+        if (args.length == 1 && (args[0].equals("--version") || args[0].equals("-V"))) {
+            out.println("omluke " + OmlukeApplication.productVersion());
+            return 0;
+        }
         try {
             if (args[0].equals("permissions")) {
                 return permissions(args);
