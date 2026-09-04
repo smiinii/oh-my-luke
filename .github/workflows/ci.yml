@@ -16,11 +16,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.12+8.0.LTS"
       - name: Install bubblewrap
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
@@ -29,3 +29,26 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build and test
         run: ./gradlew clean build
+      - name: Build and verify self-contained app image
+        run: ./gradlew verifyPackagedApp
+      - name: Verify reproducible package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find build/package -maxdepth 1 -type f -name 'omluke-*.tar.gz' -print -quit)"
+          test -n "$archive"
+          first_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          ./gradlew packageArchive --rerun-tasks
+          second_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          test "$first_sha" = "$second_sha"
+          echo "Reproducible package SHA-256: $second_sha"
+      - name: Upload verified development package
+        uses: actions/upload-artifact@v7
+        with:
+          name: omluke-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            build/package/*.tar.gz
+            build/package/evidence/package-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
