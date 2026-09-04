@@ -140,4 +140,6 @@ selectionRuleVersion=1
 ./gradlew test
 ```
 
-이는 제어 흐름의 검증이지 실제 Codex 버전별 연동·모델 품질·토큰 절감 실험이 아니다. 자동 컨텍스트, 자연어 계획 생성, 동적/병렬 그래프와 공개 배포는 이번 범위에 포함하지 않는다.
+실제 Codex 연결은 별도 `OML_START_CODEX_INTEGRATION=true`로 켜는 [Start 통합 검증](start-verification.md)에서 확인한다. Auto Direct·수동 Loop·Auto 승인 Workflow를 작은 사례로 실행하고, 프로세스 재시작 후 선택·호출·사용량이 유지되는지 검사한다. 계정 사용량을 소비하므로 문서의 제한·재현 명령을 먼저 확인한다.
+
+이 검증은 모델 품질·토큰 절감 비교 실험이 아니다. 자동 컨텍스트, 자연어 계획 생성, 동적/병렬 그래프와 공개 배포는 이번 범위에 포함하지 않는다.

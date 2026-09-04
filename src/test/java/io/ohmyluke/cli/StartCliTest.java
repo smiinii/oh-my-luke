@@ -30,6 +30,7 @@ class StartCliTest {
     private final AtomicInteger calls = new AtomicInteger();
     private final AtomicReference<TaskSpec> actualTask = new AtomicReference<>();
     private boolean failFirst;
+    private boolean failAlways;
 
     @BeforeEach void initialFile() throws Exception { Files.writeString(project.resolve("hello.txt"), "old"); }
 
@@ -65,6 +66,40 @@ class StartCliTest {
         assertEquals("chosen-model", actualTask.get().model());
         assertEquals("low", actualTask.get().reasoning());
         assertOutput("selectionStrategy=MANUAL", "mode=DIRECT", "selectionReason=manual-direct");
+    }
+
+    @Test void manualLoopStopsAtAttemptLimitAndRestoredRunCannotCallAgain() throws Exception {
+        assertStoppedLoopCannotCallAgain("loop", 1, "attempt-limit", 1);
+    }
+
+    @Test void autoLoopStopsAtRepeatedFailureBeforeItsLargerAttemptBudget() throws Exception {
+        assertStoppedLoopCannotCallAgain("auto", 3, "repeated-failure", 2);
+    }
+
+    private void assertStoppedLoopCannotCallAgain(String mode, int attempts, String reason, int expectedCalls) throws Exception {
+        writeTask(attempts, false);
+        failAlways = true;
+        assertEquals(1, fixture(forbiddenPrompt()).cli().execute(new String[] {
+                "start", "job.json", "--mode", mode, "--run-id", "limited"}));
+        assertEquals(expectedCalls, calls.get());
+        assertOutput("result=LIMIT_REACHED", "reason=" + reason, "aiAttempts=" + expectedCalls,
+                "recordedUsage=" + expectedCalls * 10, "allTokenUsageAvailable=true");
+        RunCheckpoint stopped = new CheckpointStore(project, new CheckpointCodec()).load("limited").checkpoint();
+        String content = Files.readString(project.resolve("hello.txt"));
+        assertNotEquals("ready", content);
+        Files.writeString(project.resolve("job.json"), "invalid after start");
+        output.reset();
+        OmlukeCli restored = fixture(forbiddenPrompt()).cli();
+        assertEquals(0, restored.execute(new String[] {"inspect", "limited"}));
+        assertEquals(1, restored.execute(new String[] {"resume", "limited"}));
+        assertOutput("result=LIMIT_REACHED", "reason=" + reason, "aiAttempts=" + expectedCalls,
+                "recordedUsage=" + expectedCalls * 10, "selectionStrategy=" + (mode.equals("auto") ? "AUTO" : "MANUAL"),
+                "mode=LOOP", "selectionReason=" + (mode.equals("auto") ? "auto-bounded-retry" : "manual-loop"));
+        RunCheckpoint after = new CheckpointStore(project, new CheckpointCodec()).load("limited").checkpoint();
+        assertEquals(stopped.state(), after.state());
+        assertEquals(stopped.policyState().usage(), after.policyState().usage());
+        assertEquals(content, Files.readString(project.resolve("hello.txt")));
+        assertEquals(expectedCalls, calls.get());
     }
 
     @Test void explicitAutoNeverPromptsAndPreservesApprovalAcrossRestartAndContractReplacement() throws Exception {
@@ -177,7 +212,7 @@ class StartCliTest {
                 @Override public String fingerprint() { return "start-cli-fixture:" + task.model() + ":" + task.reasoning(); }
                 @Override public AiRuntimeResult invoke(AiRequest request) {
                     int call = calls.incrementAndGet();
-                    String content = failFirst && call == 1 ? "not-yet" : "ready";
+                    String content = failAlways ? "not-yet-" + call : failFirst && call == 1 ? "not-yet" : "ready";
                     return AiRuntimeResult.success("{\"path\":\"hello.txt\",\"content\":\"" + content + "\"}",
                             AiTokenUsage.measured(7, 0, 3, 0, "fixture"));
                 }
