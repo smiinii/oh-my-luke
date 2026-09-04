@@ -29,3 +29,15 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build and test
         run: ./gradlew clean build
+      - name: Build and verify self-contained app image
+        run: ./gradlew verifyPackagedApp
+      - name: Upload verified development package
+        uses: actions/upload-artifact@v7
+        with:
+          name: omluke-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            build/package/*.tar.gz
+            build/package/evidence/package-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
