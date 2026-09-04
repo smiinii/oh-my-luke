@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.11+10"
       - name: Install bubblewrap
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
@@ -31,6 +31,17 @@ jobs:
         run: ./gradlew clean build
       - name: Build and verify self-contained app image
         run: ./gradlew verifyPackagedApp
+      - name: Verify reproducible package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find build/package -maxdepth 1 -type f -name 'omluke-*.tar.gz' -print -quit)"
+          test -n "$archive"
+          first_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          ./gradlew packageArchive --rerun-tasks
+          second_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          test "$first_sha" = "$second_sha"
+          echo "Reproducible package SHA-256: $second_sha"
       - name: Upload verified development package
         uses: actions/upload-artifact@v7
         with:

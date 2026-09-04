@@ -45,7 +45,7 @@ build/package/evidence/package-evidence.json
 
 ## 무엇을 실제로 검증하는가
 
-검증은 원본 앱 이미지가 아니라 `tar.gz`를 새 임시 폴더에 다시 푼 결과를 사용한다. 운영체제의 `tar`로 실행 권한과 Java 런타임의 심볼릭 링크를 보존하고, 원본과 압축 해제본의 링크가 같은지 비교한다. 파일 시각·순서·소유자와 gzip 시각도 정규화해 같은 플랫폼의 같은 입력은 같은 아카이브가 되게 한다.
+검증은 원본 앱 이미지가 아니라 `tar.gz`를 새 임시 폴더에 다시 푼 결과를 사용한다. 운영체제의 `tar`로 실행 권한과 Java 런타임의 심볼릭 링크를 보존하고, 원본과 압축 해제본의 링크가 같은지 비교한다. 파일 시각·소유자·gzip 시각을 정규화하고 Linux는 항목 순서도 정렬한다. CI는 같은 체크아웃에서 패키지를 두 번 만들어 SHA-256이 같은지 운영체제별로 검사한다.
 
 1. 압축 해제한 OML 실행 파일과 포함된 Java가 실행 가능한지 확인한다.
 2. 런타임 심볼릭 링크와 `jpackage` 버전 메타데이터를 확인하고, macOS에서는 번들 서명 무결성도 검사한다.
@@ -62,13 +62,13 @@ build/package/evidence/package-evidence.json
 
 파일시스템이 실제로 차지하는 디스크 블록은 환경마다 다를 수 있다. JSON의 `imageBytes`는 압축 해제한 일반 파일의 논리적 크기 합계다.
 
-JSON은 Gradle 제품 버전과 운영체제용 네이티브 버전을 별도 필드로 기록한다. 현재 `0.1.0-SNAPSHOT` 개발본의 네이티브 버전은 macOS의 0 시작 제한 때문에 `1.0`으로 고정한다. 공개 릴리스 전에는 두 버전의 정식 매핑 규칙을 결정해야 한다.
+JSON은 Gradle 제품 버전과 운영체제용 네이티브 버전을 별도 필드로 기록한다. macOS `jpackage`가 0으로 시작하는 버전을 거부하므로 `native major = product major + 1`로 변환한다. 예를 들어 제품 `0.1.0-SNAPSHOT`은 네이티브 `1.1.0`이다. 나머지 숫자는 그대로여서 제품 버전이 바뀌면 네이티브 버전도 함께 바뀐다.
 
 2026-09-04 macOS 15.7.4 ARM64 로컬 검증에서는 Java 21.0.8을 포함했고, 압축 파일 약 34.6MB와 앱 이미지 약 51.2MB로 통과했다. 빌드별 정확한 바이트와 SHA-256, 다른 운영체제의 수치는 해당 JSON과 CI artifact를 기준으로 확인한다.
 
 ## CI에서 남기는 근거
 
-PR과 `main` CI는 macOS와 Ubuntu에서 각자 앱 이미지를 만들고 압축 해제본을 실행한다. 성공한 개발 패키지와 JSON 근거는 7일 동안 GitHub Actions artifact로 보관한다. 이 artifact는 설치 안정성을 보증하는 GitHub Release가 아니다.
+PR과 `main` CI는 macOS와 Ubuntu에서 공통으로 제공되는 Temurin `21.0.11+10`을 고정해 각자 앱 이미지를 만들고 압축 해제본을 실행한다. 같은 패키지를 한 번 더 만들어 SHA-256도 비교한다. 성공한 개발 패키지와 JSON 근거는 7일 동안 GitHub Actions artifact로 보관한다. 이 artifact는 설치 안정성을 보증하는 GitHub Release가 아니다.
 
 ## 사용자 Java와 Codex의 차이
 

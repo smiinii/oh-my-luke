@@ -50,7 +50,8 @@ class PackagedApplicationTest {
                 ? image.resolve("Contents/app/.jpackage.xml")
                 : image.resolve("lib/app/.jpackage.xml");
         String nativeVersion = tagValue(Files.readString(packageMetadata), "app-version");
-        assertEquals(property("omluke.package.nativeVersion"), nativeVersion);
+        String productVersion = property("omluke.package.productVersion");
+        assertEquals(nativeVersionFor(productVersion), nativeVersion);
         if (os.equals("macos")) {
             verifyMacBundle(image, nativeVersion);
         }
@@ -101,7 +102,7 @@ class PackagedApplicationTest {
                         + "\"nativeVersion\":\"%s\",\"javaVersion\":\"%s\"," 
                         + "\"archiveBytes\":%d,\"imageBytes\":%d,\"sha256\":\"%s\"," 
                         + "\"externalJavaAvailable\":false}",
-                os, arch, property("omluke.package.productVersion"), nativeVersion, javaVersion,
+                os, arch, productVersion, nativeVersion, javaVersion,
                 archiveBytes, imageBytes, sha256(archive));
         Path evidenceFile = Path.of(property("omluke.package.evidence"));
         Files.createDirectories(evidenceFile.getParent());
@@ -156,6 +157,13 @@ class PackagedApplicationTest {
             throw new AssertionError("missing package metadata tag: " + tag);
         }
         return xml.substring(startIndex + start.length(), endIndex);
+    }
+
+    private static String nativeVersionFor(String productVersion) {
+        String[] components = productVersion.split("-", 2)[0].split("\\.");
+        assertEquals(3, components.length, "product version must use MAJOR.MINOR.PATCH");
+        return (Integer.parseInt(components[0]) + 1) + "."
+                + Integer.parseInt(components[1]) + "." + Integer.parseInt(components[2]);
     }
 
     private void verifyMacBundle(Path image, String expectedVersion) throws Exception {

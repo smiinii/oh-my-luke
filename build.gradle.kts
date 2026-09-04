@@ -2,6 +2,12 @@ plugins {
     application
 }
 
+fun toNativePackageVersion(productVersion: String): String {
+    val components = productVersion.substringBefore('-').split('.').map(String::toInt)
+    require(components.size == 3) { "OML version must use MAJOR.MINOR.PATCH: $productVersion" }
+    return "${components[0] + 1}.${components[1]}.${components[2]}"
+}
+
 group = "io.ohmyluke"
 version = "0.1.0-SNAPSHOT"
 
@@ -45,8 +51,8 @@ val packageImageName = if (packageOs == "macos") "omluke.app" else "omluke"
 val packageImage = packageRoot.map { it.dir("app-image/$packageImageName") }
 val packageArchiveFile = packageRoot.map { it.file("omluke-${project.version}-$packageClassifier.tar.gz") }
 val packageEvidence = packageRoot.map { it.file("evidence/package-evidence.json") }
-// macOS jpackage rejects versions that start with zero; keep this explicit and report both versions.
-val nativePackageVersion = "1.0"
+// macOS jpackage rejects versions that start with zero, so the native major is product major + 1.
+val nativePackageVersion = toNativePackageVersion(project.version.toString())
 val mainJarName = tasks.named<Jar>("jar").flatMap { it.archiveFileName }
 val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(21)
@@ -146,7 +152,6 @@ val verifyPackagedApp = tasks.register<Test>("verifyPackagedApp") {
     systemProperty("omluke.package.os", packageOs)
     systemProperty("omluke.package.arch", packageArch)
     systemProperty("omluke.package.productVersion", project.version.toString())
-    systemProperty("omluke.package.nativeVersion", nativePackageVersion)
     systemProperty("omluke.package.evidence", packageEvidence.get().asFile.absolutePath)
     testLogging {
         events("failed", "skipped", "standardOut")
