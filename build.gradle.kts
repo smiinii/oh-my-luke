@@ -86,6 +86,9 @@ val packageAppImage = tasks.register<Exec>("packageAppImage") {
     group = "distribution"
     description = "Builds a platform-specific OML image with its own Java runtime."
     dependsOn(tasks.installDist, cleanPackageAppImage)
+    // jpackage may create a different Linux CDS archive while another test JVM is active.
+    // Keep packaging serial with test whenever both tasks share one Gradle invocation.
+    mustRunAfter(tasks.test)
     // Declare the parent only: Gradle may create an output directory before Exec,
     // while jpackage requires the final <name>.app/<name> path not to exist.
     outputs.dir(packageRoot.map { it.dir("app-image") })

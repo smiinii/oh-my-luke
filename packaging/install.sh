@@ -157,6 +157,7 @@ staging=
 temporary_marker=
 temporary_uninstaller=
 temporary_link=
+temporary_install_root=
 
 acquire_operation_lock() {
     [ ! -L "$lock_file" ] || fail "수명주기 잠금 파일이 심볼릭 링크라서 중단했습니다: $lock_file"
@@ -208,6 +209,10 @@ cleanup() {
         rm -f -- "$temporary_link" || :
         temporary_link=
     fi
+    if [ -n "$temporary_install_root" ] && [ -d "$temporary_install_root" ]; then
+        rm -rf -- "$temporary_install_root" || :
+        temporary_install_root=
+    fi
 }
 
 handle_signal() {
@@ -248,16 +253,25 @@ if [ -e "$install_root" ]; then
         || fail "OML 소유 표시가 없는 기존 설치 경로입니다: $install_root"
     [ "$(sed -n '1p' "$marker")" = "$product_marker" ] || fail "기존 설치 경로의 소유 표시가 다릅니다."
 else
-    mkdir "$install_root"
-    marker_candidate="$install_root/.owned-by-omluke-$$"
+    temporary_install_root=$(mktemp -d "$prefix/lib/.omluke-install-root.XXXXXXXX") \
+        || fail "임시 설치 루트를 만들 수 없습니다."
+    chmod 755 "$temporary_install_root"
+    marker_candidate="$temporary_install_root/.owned-by-omluke-$$"
     [ ! -e "$marker_candidate" ] && [ ! -L "$marker_candidate" ] \
         || fail "임시 소유 표시 경로가 이미 존재합니다: $marker_candidate"
     (umask 077; set -C; printf '%s\n' "$product_marker" > "$marker_candidate") \
         || fail "임시 소유 표시를 만들 수 없습니다."
     temporary_marker=$marker_candidate
     chmod 644 "$temporary_marker"
-    mv "$temporary_marker" "$marker"
+    mv "$temporary_marker" "$temporary_install_root/.owned-by-omluke"
     temporary_marker=
+    [ ! -e "$install_root" ] && [ ! -L "$install_root" ] \
+        || fail "설치 루트가 초기화 중 변경되었습니다: $install_root"
+    mv "$temporary_install_root" "$install_root"
+    temporary_install_root=
+    [ ! -L "$marker" ] && [ -f "$marker" ] \
+        && [ "$(sed -n '1p' "$marker")" = "$product_marker" ] \
+        || fail "완성된 소유 표시와 함께 설치 루트를 게시하지 못했습니다: $install_root"
 fi
 
 installed_uninstaller="$install_root/uninstall.sh"

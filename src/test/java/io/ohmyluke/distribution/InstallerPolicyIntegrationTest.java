@@ -30,6 +30,9 @@ class InstallerPolicyIntegrationTest {
     private static final String LOCK_NAME = ".omluke-operation.lock";
     private static final String UNINSTALLER_SWAP = "mv -f \"$temporary_uninstaller\" \"$installed_uninstaller\"";
     private static final String COMMAND_SWAP = "mv -f \"$temporary_link\" \"$bin_link\"";
+    private static final String INSTALL_ROOT_SWAP = "mv \"$temporary_install_root\" \"$install_root\"";
+    private static final String UNINSTALLER_LOCK_CHECKPOINT =
+            "acquire_operation_lock\nreject_symlink_components \"$install_root\"";
 
     @TempDir Path directory;
 
@@ -303,6 +306,59 @@ class InstallerPolicyIntegrationTest {
     }
 
     @Test
+    void actualInstallerRecoversWhenKilledBeforeAndAfterPublishingItsOwnedRoot() throws Exception {
+        Path root = realTestRoot();
+        Path home = Files.createDirectory(root.resolve("killed-installer-home"));
+        Bundle bundle = createBundle(root.resolve("killed-installer-bundle"), hostPlatform());
+        String originalInstaller = Files.readString(bundle.installer());
+
+        Path beforePrefix = root.resolve("killed-before-root-publish");
+        injectKillBefore(bundle.installer(), INSTALL_ROOT_SWAP);
+        Result killedBefore = runScript(bundle.installer(), List.of("--prefix", beforePrefix.toString()), home);
+        assertNotEquals(0, killedBefore.exitCode(), killedBefore.output());
+        assertFalse(Files.exists(beforePrefix.resolve("lib/omluke"), NOFOLLOW_LINKS));
+
+        Files.writeString(bundle.installer(), originalInstaller);
+        Result recoveredBefore = runScript(bundle.installer(), List.of("--prefix", beforePrefix.toString()), home);
+        assertEquals(0, recoveredBefore.exitCode(), recoveredBefore.output());
+        assertTrue(Files.isSymbolicLink(beforePrefix.resolve("bin/omluke")));
+
+        Path afterPrefix = root.resolve("killed-after-root-publish");
+        injectKillAfter(bundle.installer(), INSTALL_ROOT_SWAP);
+        Result killedAfter = runScript(bundle.installer(), List.of("--prefix", afterPrefix.toString()), home);
+        assertNotEquals(0, killedAfter.exitCode(), killedAfter.output());
+        assertEquals(OWNER + System.lineSeparator(),
+                Files.readString(afterPrefix.resolve("lib/omluke/.owned-by-omluke")));
+
+        Files.writeString(bundle.installer(), originalInstaller);
+        Result recoveredAfter = runScript(bundle.installer(), List.of("--prefix", afterPrefix.toString()), home);
+        assertEquals(0, recoveredAfter.exitCode(), recoveredAfter.output());
+        assertTrue(Files.isSymbolicLink(afterPrefix.resolve("bin/omluke")));
+    }
+
+    @Test
+    void actualUninstallerReleasesItsLockWhenForciblyKilled() throws Exception {
+        Path root = realTestRoot();
+        Path home = Files.createDirectory(root.resolve("killed-uninstaller-home"));
+        Bundle bundle = createBundle(root.resolve("killed-uninstaller-bundle"), hostPlatform());
+        Path prefix = root.resolve("killed-uninstaller-prefix");
+        Result installed = runScript(bundle.installer(), List.of("--prefix", prefix.toString()), home);
+        assertEquals(0, installed.exitCode(), installed.output());
+
+        Path installedUninstaller = prefix.resolve("lib/omluke/uninstall.sh");
+        injectKillAfter(installedUninstaller, UNINSTALLER_LOCK_CHECKPOINT);
+        Result killed = runScript(installedUninstaller, List.of("--prefix", prefix.toString()), home);
+        assertNotEquals(0, killed.exitCode(), killed.output());
+        assertTrue(Files.isSymbolicLink(prefix.resolve("bin/omluke")));
+
+        Result reinstalled = runScript(bundle.installer(), List.of("--prefix", prefix.toString()), home);
+        assertEquals(0, reinstalled.exitCode(), reinstalled.output());
+        Result removed = runScript(installedUninstaller, List.of("--prefix", prefix.toString()), home);
+        assertEquals(0, removed.exitCode(), removed.output());
+        assertFalse(Files.exists(prefix.resolve("lib/omluke"), NOFOLLOW_LINKS));
+    }
+
+    @Test
     void refusesASymlinkedOperationLockWithoutTouchingItsTarget() throws Exception {
         Path root = realTestRoot();
         Path home = Files.createDirectory(root.resolve("symlink-lock-home"));
@@ -426,9 +482,24 @@ class InstallerPolicyIntegrationTest {
     }
 
     private static void injectFailureBefore(Path script, String command) throws IOException {
+        injectBefore(script, command, "false # injected publish failure");
+    }
+
+    private static void injectKillBefore(Path script, String command) throws IOException {
+        injectBefore(script, command, "kill -KILL $$ # injected forced termination");
+    }
+
+    private static void injectKillAfter(Path script, String command) throws IOException {
         String contents = Files.readString(script);
-        assertTrue(contents.contains(command), "missing publish command: " + command);
-        Files.writeString(script, contents.replace(command, "false # injected publish failure\n" + command));
+        assertTrue(contents.contains(command), "missing forced-termination checkpoint: " + command);
+        Files.writeString(script,
+                contents.replace(command, command + "\nkill -KILL $$ # injected forced termination"));
+    }
+
+    private static void injectBefore(Path script, String command, String injectedCommand) throws IOException {
+        String contents = Files.readString(script);
+        assertTrue(contents.contains(command), "missing injection checkpoint: " + command);
+        Files.writeString(script, contents.replace(command, injectedCommand + "\n" + command));
     }
 
     private static LockHolder holdOperationLock(Path lock) throws Exception {
