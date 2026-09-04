@@ -99,28 +99,40 @@ validate_prefix
 install_root="$prefix/lib/omluke"
 marker="$install_root/.owned-by-omluke"
 bin_link="$prefix/bin/omluke"
-lock_dir="$prefix/lib/.omluke-operation-lock"
-lock_held=false
+lock_file="$prefix/lib/.omluke-operation.lock"
 
-cleanup() {
-    if [ "$lock_held" = true ]; then
-        if rmdir "$lock_dir" 2>/dev/null; then
-            lock_held=false
-        fi
+acquire_operation_lock() {
+    [ ! -L "$lock_file" ] || fail "수명주기 잠금 파일이 심볼릭 링크라서 중단했습니다: $lock_file"
+    if [ ! -e "$lock_file" ]; then
+        (umask 077; set -C; : > "$lock_file") 2>/dev/null || :
     fi
+    [ ! -L "$lock_file" ] && [ -f "$lock_file" ] \
+        || fail "수명주기 잠금 경로가 일반 파일이 아닙니다: $lock_file"
+    exec 9<> "$lock_file" || fail "수명주기 잠금 파일을 열 수 없습니다: $lock_file"
+    lock_path_inode=$(ls -di "$lock_file" | awk '{print $1}')
+    lock_fd_inode=$(ls -diL /dev/fd/9 | awk '{print $1}')
+    [ ! -L "$lock_file" ] && [ -f "$lock_file" ] && [ "$lock_path_inode" = "$lock_fd_inode" ] \
+        || fail "수명주기 잠금 파일이 여는 동안 변경되었습니다: $lock_file"
+    case "$host_os" in
+        macos)
+            [ -x /usr/bin/lockf ] || fail "운영체제 잠금 도구를 찾을 수 없습니다: /usr/bin/lockf"
+            /usr/bin/lockf -s -t 0 9 \
+                || fail "다른 OML 설치 또는 제거 작업이 진행 중입니다: $lock_file"
+            ;;
+        linux)
+            [ -x /usr/bin/flock ] || fail "운영체제 잠금 도구를 찾을 수 없습니다: /usr/bin/flock"
+            /usr/bin/flock -n 9 \
+                || fail "다른 OML 설치 또는 제거 작업이 진행 중입니다: $lock_file"
+            ;;
+        *) fail "지원하지 않는 운영체제 잠금 방식입니다: $host_os" ;;
+    esac
+    final_lock_path_inode=$(ls -di "$lock_file" | awk '{print $1}')
+    final_lock_fd_inode=$(ls -diL /dev/fd/9 | awk '{print $1}')
+    [ ! -L "$lock_file" ] && [ -f "$lock_file" ] \
+        && [ "$final_lock_path_inode" = "$lock_path_inode" ] \
+        && [ "$final_lock_fd_inode" = "$lock_fd_inode" ] \
+        || fail "수명주기 잠금 파일이 획득 중 변경되었습니다: $lock_file"
 }
-
-handle_signal() {
-    signal_status=$1
-    trap - EXIT HUP INT TERM
-    cleanup
-    exit "$signal_status"
-}
-
-trap cleanup EXIT
-trap 'handle_signal 129' HUP
-trap 'handle_signal 130' INT
-trap 'handle_signal 143' TERM
 
 reject_symlink_components "$prefix"
 reject_symlink_components "$prefix/lib"
@@ -130,8 +142,12 @@ reject_symlink_components "$install_root"
 [ ! -L "$marker" ] && [ -f "$marker" ] || fail "OML 소유 표시가 없어 제거하지 않습니다: $install_root"
 [ "$(sed -n '1p' "$marker")" = "$product_marker" ] || fail "설치 경로의 소유 표시가 다릅니다."
 
-mkdir "$lock_dir" 2>/dev/null || fail "다른 OML 설치 또는 제거 작업이 진행 중입니다: $lock_dir"
-lock_held=true
+case "$(uname -s)" in
+    Darwin) host_os=macos ;;
+    Linux) host_os=linux ;;
+    *) fail "지원하지 않는 운영체제입니다: $(uname -s)" ;;
+esac
+acquire_operation_lock
 reject_symlink_components "$install_root"
 [ ! -L "$marker" ] && [ -f "$marker" ] || fail "OML 소유 표시가 없어 제거하지 않습니다: $install_root"
 [ "$(sed -n '1p' "$marker")" = "$product_marker" ] || fail "설치 경로의 소유 표시가 다릅니다."
@@ -150,6 +166,5 @@ if [ -e "$bin_link" ] || [ -L "$bin_link" ]; then
 fi
 
 rm -rf -- "$install_root"
-cleanup
-trap - EXIT HUP INT TERM
+exec 9>&-
 printf '%s\n' "OML 프로그램을 제거했습니다. 프로젝트의 .oml 기록과 Codex CLI 설정은 유지했습니다."

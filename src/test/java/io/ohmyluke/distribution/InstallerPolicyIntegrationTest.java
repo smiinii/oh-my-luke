@@ -1,6 +1,7 @@
 package io.ohmyluke.distribution;
 
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -26,7 +27,9 @@ import org.junit.jupiter.api.io.TempDir;
 class InstallerPolicyIntegrationTest {
     private static final String VERSION = "0.1.0-rc.1";
     private static final String OWNER = "io.ohmyluke";
-    private static final String LOCK_NAME = ".omluke-operation-lock";
+    private static final String LOCK_NAME = ".omluke-operation.lock";
+    private static final String UNINSTALLER_SWAP = "mv -f \"$temporary_uninstaller\" \"$installed_uninstaller\"";
+    private static final String COMMAND_SWAP = "mv -f \"$temporary_link\" \"$bin_link\"";
 
     @TempDir Path directory;
 
@@ -253,24 +256,116 @@ class InstallerPolicyIntegrationTest {
         Bundle bundle = createBundle(root.resolve("lock-bundle"), hostPlatform());
 
         Path installPrefix = root.resolve("install-lock-prefix");
-        Files.createDirectories(installPrefix.resolve("lib").resolve(LOCK_NAME));
-        Result blockedInstall = runScript(bundle.installer(), List.of("--prefix", installPrefix.toString()), home);
-        assertNotEquals(0, blockedInstall.exitCode(), blockedInstall.output());
-        assertTrue(blockedInstall.output().contains("진행 중"), blockedInstall.output());
-        assertFalse(Files.exists(installPrefix.resolve("lib/omluke"), NOFOLLOW_LINKS));
+        Path installLock = installPrefix.resolve("lib").resolve(LOCK_NAME);
+        try (LockHolder ignored = holdOperationLock(installLock)) {
+            Result blockedInstall = runScript(bundle.installer(), List.of("--prefix", installPrefix.toString()), home);
+            assertNotEquals(0, blockedInstall.exitCode(), blockedInstall.output());
+            assertTrue(blockedInstall.output().contains("진행 중"), blockedInstall.output());
+            assertFalse(Files.exists(installPrefix.resolve("lib/omluke"), NOFOLLOW_LINKS));
+        }
 
         Path removalPrefix = root.resolve("removal-lock-prefix");
         Result installed = runScript(bundle.installer(), List.of("--prefix", removalPrefix.toString()), home);
         assertEquals(0, installed.exitCode(), installed.output());
         Path installedUninstaller = removalPrefix.resolve("lib/omluke/uninstall.sh");
-        Files.createDirectory(removalPrefix.resolve("lib").resolve(LOCK_NAME));
+        Path removalLock = removalPrefix.resolve("lib").resolve(LOCK_NAME);
+        try (LockHolder ignored = holdOperationLock(removalLock)) {
+            Result blockedRemoval = runScript(installedUninstaller,
+                    List.of("--prefix", removalPrefix.toString()), home);
+            assertNotEquals(0, blockedRemoval.exitCode(), blockedRemoval.output());
+            assertTrue(blockedRemoval.output().contains("진행 중"), blockedRemoval.output());
+            assertTrue(Files.isRegularFile(removalPrefix.resolve("lib/omluke/.owned-by-omluke")));
+            assertTrue(Files.isSymbolicLink(removalPrefix.resolve("bin/omluke")));
+        }
+    }
 
-        Result blockedRemoval = runScript(installedUninstaller,
+    @Test
+    void releasesTheOperationLockAfterItsHolderIsForciblyKilled() throws Exception {
+        Path root = realTestRoot();
+        Path home = Files.createDirectory(root.resolve("killed-lock-home"));
+        Bundle bundle = createBundle(root.resolve("killed-lock-bundle"), hostPlatform());
+        Path prefix = root.resolve("killed-lock-prefix");
+        Path lock = prefix.resolve("lib").resolve(LOCK_NAME);
+
+        try (LockHolder holder = holdOperationLock(lock)) {
+            holder.killForcibly();
+        }
+        Result installed = runScript(bundle.installer(), List.of("--prefix", prefix.toString()), home);
+        assertEquals(0, installed.exitCode(), installed.output());
+
+        Path installedUninstaller = prefix.resolve("lib/omluke/uninstall.sh");
+        try (LockHolder holder = holdOperationLock(lock)) {
+            holder.killForcibly();
+        }
+        Result removed = runScript(installedUninstaller, List.of("--prefix", prefix.toString()), home);
+        assertEquals(0, removed.exitCode(), removed.output());
+        assertFalse(Files.exists(prefix.resolve("lib/omluke"), NOFOLLOW_LINKS));
+    }
+
+    @Test
+    void refusesASymlinkedOperationLockWithoutTouchingItsTarget() throws Exception {
+        Path root = realTestRoot();
+        Path home = Files.createDirectory(root.resolve("symlink-lock-home"));
+        Bundle bundle = createBundle(root.resolve("symlink-lock-bundle"), hostPlatform());
+        Path external = root.resolve("external-lock-target");
+        Files.writeString(external, "must stay unchanged");
+
+        Path installPrefix = root.resolve("symlink-install-lock-prefix");
+        Path installLib = Files.createDirectories(installPrefix.resolve("lib"));
+        Files.createSymbolicLink(installLib.resolve(LOCK_NAME), external);
+        Result install = runScript(bundle.installer(), List.of("--prefix", installPrefix.toString()), home);
+        assertNotEquals(0, install.exitCode(), install.output());
+        assertTrue(install.output().contains("심볼릭 링크"), install.output());
+        assertEquals("must stay unchanged", Files.readString(external));
+
+        Path removalPrefix = root.resolve("symlink-removal-lock-prefix");
+        Result installed = runScript(bundle.installer(), List.of("--prefix", removalPrefix.toString()), home);
+        assertEquals(0, installed.exitCode(), installed.output());
+        Path removalLock = removalPrefix.resolve("lib").resolve(LOCK_NAME);
+        Files.delete(removalLock);
+        Files.createSymbolicLink(removalLock, external);
+        Result removal = runScript(removalPrefix.resolve("lib/omluke/uninstall.sh"),
                 List.of("--prefix", removalPrefix.toString()), home);
-        assertNotEquals(0, blockedRemoval.exitCode(), blockedRemoval.output());
-        assertTrue(blockedRemoval.output().contains("진행 중"), blockedRemoval.output());
+        assertNotEquals(0, removal.exitCode(), removal.output());
+        assertTrue(removal.output().contains("심볼릭 링크"), removal.output());
+        assertEquals("must stay unchanged", Files.readString(external));
         assertTrue(Files.isRegularFile(removalPrefix.resolve("lib/omluke/.owned-by-omluke")));
-        assertTrue(Files.isSymbolicLink(removalPrefix.resolve("bin/omluke")));
+    }
+
+    @Test
+    void publishFailuresNeverRemoveExistingLifecycleEntrypoints() throws Exception {
+        Path root = realTestRoot();
+        Path home = Files.createDirectory(root.resolve("atomic-publish-home"));
+        Bundle bundle = createBundle(root.resolve("atomic-publish-bundle"), hostPlatform());
+        Path prefix = root.resolve("atomic-publish-prefix");
+        Result installed = runScript(bundle.installer(), List.of("--prefix", prefix.toString()), home);
+        assertEquals(0, installed.exitCode(), installed.output());
+
+        Path installedUninstaller = prefix.resolve("lib/omluke/uninstall.sh");
+        Path command = prefix.resolve("bin/omluke");
+        byte[] originalUninstaller = Files.readAllBytes(installedUninstaller);
+        Path originalTarget = Files.readSymbolicLink(command);
+        String originalInstaller = Files.readString(bundle.installer());
+
+        injectFailureBefore(bundle.installer(), UNINSTALLER_SWAP);
+        Result uninstallerFailure = runScript(bundle.installer(),
+                List.of("--prefix", prefix.toString()), home);
+        assertNotEquals(0, uninstallerFailure.exitCode(), uninstallerFailure.output());
+        assertArrayEquals(originalUninstaller, Files.readAllBytes(installedUninstaller));
+        assertEquals(originalTarget, Files.readSymbolicLink(command));
+
+        Files.writeString(bundle.installer(), originalInstaller);
+        injectFailureBefore(bundle.installer(), COMMAND_SWAP);
+        Result commandFailure = runScript(bundle.installer(), List.of("--prefix", prefix.toString()), home);
+        assertNotEquals(0, commandFailure.exitCode(), commandFailure.output());
+        assertTrue(Files.isRegularFile(installedUninstaller));
+        assertEquals(originalTarget, Files.readSymbolicLink(command));
+
+        Result version = runCommand(List.of(command.toString(), "--version"), bundle.root(), home);
+        assertEquals(0, version.exitCode(), version.output());
+        assertEquals("omluke " + VERSION, version.output().strip());
+        Result uninstallHelp = runScript(installedUninstaller, List.of("--help"), home);
+        assertEquals(0, uninstallHelp.exitCode(), uninstallHelp.output());
     }
 
     private void assertRejectedByBothScripts(Bundle bundle, Path prefix, Path home) throws Exception {
@@ -328,6 +423,45 @@ class InstallerPolicyIntegrationTest {
         Files.copy(sourcePath, destination, StandardCopyOption.REPLACE_EXISTING);
         assertTrue(destination.toFile().setExecutable(true, false));
         return destination;
+    }
+
+    private static void injectFailureBefore(Path script, String command) throws IOException {
+        String contents = Files.readString(script);
+        assertTrue(contents.contains(command), "missing publish command: " + command);
+        Files.writeString(script, contents.replace(command, "false # injected publish failure\n" + command));
+    }
+
+    private static LockHolder holdOperationLock(Path lock) throws Exception {
+        Files.createDirectories(lock.getParent());
+        if (!Files.exists(lock, NOFOLLOW_LINKS)) {
+            Files.createFile(lock);
+        }
+        Path ready = lock.resolveSibling(lock.getFileName() + ".ready-" + System.nanoTime());
+        Platform platform = hostPlatform();
+        String acquire = platform.os().equals("macos")
+                ? "/usr/bin/lockf -s -t 0 9"
+                : "/usr/bin/flock -n 9";
+        String holderScript = "exec 9<>\"$1\" || exit 90\n"
+                + acquire + " || exit 91\n"
+                + "printf '%s\\n' ready > \"$2\"\n"
+                + "exec /bin/sleep 30";
+        ProcessBuilder builder = new ProcessBuilder(
+                        "/bin/sh", "-c", holderScript, "lock-holder", lock.toString(), ready.toString())
+                .redirectErrorStream(true);
+        builder.environment().clear();
+        builder.environment().put("PATH", "/usr/bin:/bin");
+        Process process = builder.start();
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (!Files.exists(ready, NOFOLLOW_LINKS) && process.isAlive() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        if (!Files.exists(ready, NOFOLLOW_LINKS)) {
+            process.destroyForcibly();
+            process.waitFor(5, TimeUnit.SECONDS);
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            throw new AssertionError("operation lock holder did not start: " + output);
+        }
+        return new LockHolder(process, ready);
     }
 
     private Path realTestRoot() throws IOException {
@@ -404,4 +538,29 @@ class InstallerPolicyIntegrationTest {
     private record Bundle(Path root, Path installer, Path uninstaller) {}
 
     private record Result(int exitCode, String output) {}
+
+    private static final class LockHolder implements AutoCloseable {
+        private final Process process;
+        private final Path ready;
+
+        private LockHolder(Process process, Path ready) {
+            this.process = process;
+            this.ready = ready;
+        }
+
+        private void killForcibly() throws Exception {
+            process.destroyForcibly();
+            assertTrue(process.waitFor(5, TimeUnit.SECONDS), "operation lock holder did not stop");
+            Files.deleteIfExists(ready);
+        }
+
+        @Override
+        public void close() throws Exception {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+                assertTrue(process.waitFor(5, TimeUnit.SECONDS), "operation lock holder did not stop");
+            }
+            Files.deleteIfExists(ready);
+        }
+    }
 }

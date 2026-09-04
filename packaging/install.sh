@@ -148,7 +148,7 @@ marker="$install_root/.owned-by-omluke"
 bin_dir="$prefix/bin"
 bin_link="$bin_dir/omluke"
 installed_launcher="$version_dir/$launcher_suffix"
-lock_dir="$prefix/lib/.omluke-operation-lock"
+lock_file="$prefix/lib/.omluke-operation.lock"
 initial_bin_state=absent
 initial_bin_target=
 initial_uninstaller_state=absent
@@ -157,7 +157,39 @@ staging=
 temporary_marker=
 temporary_uninstaller=
 temporary_link=
-lock_held=false
+
+acquire_operation_lock() {
+    [ ! -L "$lock_file" ] || fail "수명주기 잠금 파일이 심볼릭 링크라서 중단했습니다: $lock_file"
+    if [ ! -e "$lock_file" ]; then
+        (umask 077; set -C; : > "$lock_file") 2>/dev/null || :
+    fi
+    [ ! -L "$lock_file" ] && [ -f "$lock_file" ] \
+        || fail "수명주기 잠금 경로가 일반 파일이 아닙니다: $lock_file"
+    exec 9<> "$lock_file" || fail "수명주기 잠금 파일을 열 수 없습니다: $lock_file"
+    lock_path_inode=$(ls -di "$lock_file" | awk '{print $1}')
+    lock_fd_inode=$(ls -diL /dev/fd/9 | awk '{print $1}')
+    [ ! -L "$lock_file" ] && [ -f "$lock_file" ] && [ "$lock_path_inode" = "$lock_fd_inode" ] \
+        || fail "수명주기 잠금 파일이 여는 동안 변경되었습니다: $lock_file"
+    case "$host_os" in
+        macos)
+            [ -x /usr/bin/lockf ] || fail "운영체제 잠금 도구를 찾을 수 없습니다: /usr/bin/lockf"
+            /usr/bin/lockf -s -t 0 9 \
+                || fail "다른 OML 설치 또는 제거 작업이 진행 중입니다: $lock_file"
+            ;;
+        linux)
+            [ -x /usr/bin/flock ] || fail "운영체제 잠금 도구를 찾을 수 없습니다: /usr/bin/flock"
+            /usr/bin/flock -n 9 \
+                || fail "다른 OML 설치 또는 제거 작업이 진행 중입니다: $lock_file"
+            ;;
+        *) fail "지원하지 않는 운영체제 잠금 방식입니다: $host_os" ;;
+    esac
+    final_lock_path_inode=$(ls -di "$lock_file" | awk '{print $1}')
+    final_lock_fd_inode=$(ls -diL /dev/fd/9 | awk '{print $1}')
+    [ ! -L "$lock_file" ] && [ -f "$lock_file" ] \
+        && [ "$final_lock_path_inode" = "$lock_path_inode" ] \
+        && [ "$final_lock_fd_inode" = "$lock_fd_inode" ] \
+        || fail "수명주기 잠금 파일이 획득 중 변경되었습니다: $lock_file"
+}
 
 cleanup() {
     if [ -n "$staging" ] && [ -d "$staging" ]; then
@@ -175,11 +207,6 @@ cleanup() {
     if [ -n "$temporary_link" ]; then
         rm -f -- "$temporary_link" || :
         temporary_link=
-    fi
-    if [ "$lock_held" = true ]; then
-        if rmdir "$lock_dir" 2>/dev/null; then
-            lock_held=false
-        fi
     fi
 }
 
@@ -201,8 +228,7 @@ reject_symlink_components "$bin_dir"
 mkdir -p "$prefix/lib" "$bin_dir"
 reject_symlink_components "$prefix/lib"
 reject_symlink_components "$bin_dir"
-mkdir "$lock_dir" 2>/dev/null || fail "다른 OML 설치 또는 제거 작업이 진행 중입니다: $lock_dir"
-lock_held=true
+acquire_operation_lock
 
 if [ -e "$bin_link" ] || [ -L "$bin_link" ]; then
     [ -L "$bin_link" ] || fail "기존 명령을 덮어쓰지 않습니다: $bin_link"
@@ -281,6 +307,10 @@ case "$initial_uninstaller_state" in
     absent)
         [ ! -e "$installed_uninstaller" ] && [ ! -L "$installed_uninstaller" ] \
             || fail "제거 스크립트 경로가 설치 중 변경되었습니다: $installed_uninstaller"
+        ln "$temporary_uninstaller" "$installed_uninstaller" \
+            || fail "제거 스크립트 경로가 설치 중 변경되었습니다: $installed_uninstaller"
+        rm -- "$temporary_uninstaller"
+        temporary_uninstaller=
         ;;
     regular)
         [ ! -L "$installed_uninstaller" ] && [ -f "$installed_uninstaller" ] \
@@ -289,40 +319,38 @@ case "$initial_uninstaller_state" in
         final_uninstaller_inode=$(ls -di "$installed_uninstaller" | awk '{print $1}')
         [ "$final_uninstaller_inode" = "$initial_uninstaller_inode" ] \
             || fail "기존 제거 스크립트가 설치 중 교체되었습니다: $installed_uninstaller"
-        rm -- "$installed_uninstaller"
+        mv -f "$temporary_uninstaller" "$installed_uninstaller"
+        temporary_uninstaller=
         ;;
     *) fail "알 수 없는 제거 스크립트 상태입니다." ;;
 esac
-[ ! -e "$installed_uninstaller" ] && [ ! -L "$installed_uninstaller" ] \
-    || fail "제거 스크립트 경로가 설치 중 변경되었습니다: $installed_uninstaller"
-mv "$temporary_uninstaller" "$installed_uninstaller"
-temporary_uninstaller=
 
-link_candidate="$bin_dir/.omluke-link-$$"
-[ ! -e "$link_candidate" ] && [ ! -L "$link_candidate" ] \
-    || fail "임시 명령 경로가 이미 존재합니다: $link_candidate"
-ln -s "$installed_launcher" "$link_candidate"
-temporary_link=$link_candidate
 case "$initial_bin_state" in
     absent)
         [ ! -e "$bin_link" ] && [ ! -L "$bin_link" ] \
             || fail "명령 경로가 설치 중 변경되었습니다: $bin_link"
+        ln -s "$installed_launcher" "$bin_link" \
+            || fail "명령 경로가 설치 중 변경되었습니다: $bin_link"
         ;;
     owned-link)
+        link_candidate="$bin_dir/.omluke-link-$$"
+        [ ! -e "$link_candidate" ] && [ ! -L "$link_candidate" ] \
+            || fail "임시 명령 경로가 이미 존재합니다: $link_candidate"
+        ln -s "$installed_launcher" "$link_candidate"
+        temporary_link=$link_candidate
         [ -L "$bin_link" ] && [ ! -d "$bin_link" ] \
             || fail "기존 OML 명령이 설치 중 변경되었습니다: $bin_link"
         final_target=$(readlink "$bin_link")
         [ "$final_target" = "$initial_bin_target" ] && is_owned_command_target "$final_target" \
             || fail "기존 OML 명령 대상이 설치 중 변경되었습니다: $bin_link"
-        rm -- "$bin_link"
+        mv -f "$temporary_link" "$bin_link"
+        temporary_link=
         ;;
     *) fail "알 수 없는 명령 경로 상태입니다." ;;
 esac
-[ ! -e "$bin_link" ] && [ ! -L "$bin_link" ] || fail "명령 경로가 설치 중 변경되었습니다: $bin_link"
-mv "$temporary_link" "$bin_link"
-temporary_link=
 
 cleanup
+exec 9>&-
 trap - EXIT HUP INT TERM
 printf '%s\n' "OML $version 설치 완료: $bin_link"
 case ":$original_path:" in
