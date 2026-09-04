@@ -68,7 +68,7 @@ JSON은 Gradle 제품 버전과 운영체제용 네이티브 버전을 별도 �
 
 ## CI에서 남기는 근거
 
-PR과 `main` CI는 macOS와 Ubuntu에서 공통으로 제공되는 Temurin `21.0.11+10`을 고정해 각자 앱 이미지를 만들고 압축 해제본을 실행한다. 같은 패키지를 한 번 더 만들어 SHA-256도 비교한다. 성공한 개발 패키지와 JSON 근거는 7일 동안 GitHub Actions artifact로 보관한다. 이 artifact는 설치 안정성을 보증하는 GitHub Release가 아니다.
+PR과 `main` CI는 macOS와 Ubuntu에서 공통으로 제공되는 Temurin `21.0.12+8.0.LTS`를 고정해 각자 앱 이미지를 만들고 압축 해제본을 실행한다. 같은 패키지를 한 번 더 만들어 SHA-256도 비교한다. 성공한 개발 패키지와 JSON 근거는 7일 동안 GitHub Actions artifact로 보관한다. 이 artifact는 설치 안정성을 보증하는 GitHub Release가 아니다.
 
 ## 사용자 Java와 Codex의 차이
 
