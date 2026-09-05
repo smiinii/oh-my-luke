@@ -24,11 +24,15 @@ import io.ohmyluke.ai.codex.CodexCliRuntime;
 import io.ohmyluke.ai.codex.CodexReasoningEffort;
 import io.ohmyluke.tool.PlatformProcessSandbox;
 import io.ohmyluke.tool.ProcessSandbox;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.function.Function;
+import java.util.Properties;
 
 /** Entry point for the Oh My Luke command-line application. */
 public final class OmlukeApplication {
     private static final String PRODUCT_NAME = "Oh My Luke";
+    private static final String PRODUCT_VERSION = loadProductVersion();
 
     private OmlukeApplication() {
     }
@@ -69,5 +73,26 @@ public final class OmlukeApplication {
 
     static String productName() {
         return PRODUCT_NAME;
+    }
+
+    static String productVersion() {
+        return PRODUCT_VERSION;
+    }
+
+    private static String loadProductVersion() {
+        Properties properties = new Properties();
+        try (InputStream input = OmlukeApplication.class.getResourceAsStream("/io/ohmyluke/version.properties")) {
+            if (input == null) {
+                throw new IllegalStateException("missing product version resource");
+            }
+            properties.load(input);
+        } catch (IOException error) {
+            throw new IllegalStateException("cannot read product version resource", error);
+        }
+        String version = properties.getProperty("version", "").strip();
+        if (!version.matches("[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")) {
+            throw new IllegalStateException("invalid product version resource");
+        }
+        return version;
     }
 }

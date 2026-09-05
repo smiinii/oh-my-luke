@@ -52,7 +52,7 @@ Auto는 별도 실행 엔진이나 AI 라우터가 아닙니다. 작업표의 �
 | 파일 수정 | 수정 단계마다 기존 UTF-8 파일 하나, 64 KiB 이하; 다중 파일 트랜잭션 없음 |
 | 실행 관리 | 시작 시 자동/수동 모드 선택, 작업표 기반 실행·조건 분기, 승인·확인·취소·재개 |
 | 프로젝트 스캔 | 별도 Java API로 제공하며 CLI의 자동 컨텍스트·모드 선택에는 아직 미연결 |
-| 배포 | macOS·Linux 자체 포함 개발 패키지와 CI 검증 구현; 공개 Release·설치 프로그램은 미구현 |
+| 배포 | macOS ARM64·Linux x64 자체 포함 RC와 설치 수명주기 드라이런; 공개 Release는 미게시 |
 | 남은 작업 | 자동 컨텍스트, 비교 실험, 사용성 확장, 공개 배포 |
 
 - 지정한 검사를 통과한 것과 모든 요구사항의 정확성을 증명한 것은 다릅니다. 검증 기준은 사용자가 정합니다.
@@ -60,7 +60,79 @@ Auto는 별도 실행 엔진이나 AI 라우터가 아닙니다. 작업표의 �
 - 외부 명령은 운영체제와 샌드박스 제약을 받습니다. macOS의 전체 빌드·자식 프로세스 실행과 Windows 프로세스 검증은 아직 지원하지 않습니다. 모든 프로젝트의 테스트가 바로 실행되는 것은 아닙니다.
 - 시간·사용량 한도는 노드 경계에서 검사하므로 한 호출만큼 초과할 수 있습니다. 제공자가 보고하지 않은 토큰을 0으로 간주하지 않습니다.
 
-## 개발 환경에서 시작하기
+## v0.1.0-rc.1 시험판 준비
+
+현재는 **시험 배포 파일을 공개하기 전 검증 단계**입니다. GitHub Release는 아직 게시하지 않았습니다. PR에서는 아래 후보 파일을 만들고 설치 수명주기를 검사한 뒤 14일짜리 Actions artifact로만 보관합니다.
+
+| 환경 | 후보 파일 | 현재 의미 |
+| --- | --- | --- |
+| macOS Apple Silicon | `omluke-0.1.0-rc.1-macos-aarch64.tar.gz` | 해당 CI 환경의 패키징·실행 검증 |
+| Ubuntu Linux x64 | `omluke-0.1.0-rc.1-linux-x64.tar.gz` | 해당 CI 환경의 패키징·실행 검증 |
+
+Windows, Intel Mac과 다른 Linux 배포판은 아직 지원 대상으로 선언하지 않습니다. 패키지를 설치할 수 있다는 것과 모든 개발 도구 실행을 지원한다는 것도 구분합니다.
+
+PR의 `Release candidate dry run`이 통과하면 Actions 실행 화면 아래 `Artifacts`에서 `omluke-0.1.0-rc.1-release-bundle`을 내려받을 수 있습니다. GitHub가 감싼 ZIP을 먼저 풀면 운영체제별 `tar.gz`, 개별 `.sha256`, 통합 `SHA256SUMS`와 검증 JSON이 나옵니다. 로그인한 저장소 접근자만 받을 수 있고 14일 뒤 만료되므로 영구 배포 파일은 아닙니다.
+
+### 드라이런 후보를 내려받아 설치하기
+
+자신의 운영체제용 `tar.gz`와 같은 이름의 `.sha256`을 함께 받은 뒤 먼저 검증합니다.
+
+```bash
+# macOS
+shasum -a 256 -c omluke-0.1.0-rc.1-macos-aarch64.tar.gz.sha256
+
+# Linux
+sha256sum -c omluke-0.1.0-rc.1-linux-x64.tar.gz.sha256
+```
+
+검증한 파일의 압축을 풀고 포함된 설치 스크립트를 실행합니다.
+
+```bash
+# macOS Apple Silicon 예시
+tar -xzf omluke-0.1.0-rc.1-macos-aarch64.tar.gz
+cd omluke-0.1.0-rc.1-macos-aarch64
+./install.sh
+export PATH="$HOME/.local/bin:$PATH"
+omluke --version
+omluke --help
+```
+
+`export`는 현재 터미널에만 적용됩니다. macOS 기본 zsh에서 다음 터미널부터도 사용하려면 한 번만 아래처럼 저장합니다.
+
+```bash
+printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.zprofile"
+```
+
+Linux에서 bash를 사용하면 같은 줄을 `~/.profile`에 저장합니다.
+
+기본 설치 위치는 `$HOME/.local`이며 관리자 권한을 요구하지 않습니다. 설치 경로에 심볼릭 링크가 포함되거나 패키지의 운영체제·CPU가 현재 기기와 다르면 쓰기 전에 거부합니다. OML용 Java는 패키지 안에 있지만, 실제 AI 작업에는 Codex CLI 설치와 사용자 로그인이 별도로 필요합니다.
+
+### 필요할 때만 실행하기
+
+OML은 데몬이나 백그라운드 서비스가 아닙니다. 프로젝트 폴더에서 명령을 실행할 때만 동작하고 완료·실패·승인 대기 시 프로세스가 끝나므로 사용하지 않을 때는 별도로 끌 필요가 없고 토큰도 사용하지 않습니다.
+
+```bash
+cd /path/to/my-project
+omluke start job.json
+omluke inspect <run-id>
+omluke resume <run-id>
+```
+
+실행 중 잠시 중단하려면 `Ctrl+C`를 누르고 같은 ID로 재개합니다. 해당 실행을 완전히 포기할 때만 프로세스가 멈춘 뒤 `omluke cancel <run-id>`를 사용합니다. `cancel`은 일시정지나 실행 중인 노드의 즉시 강제 종료가 아닙니다. 상태와 복구 지점은 대상 프로젝트의 `.oml/`에 남습니다.
+
+### 다시 설치하고 제거하기
+
+자동 업데이트는 아직 없습니다. 진행 중인 실행을 먼저 끝낸 뒤 새 시험판을 검증하고 그 묶음의 `install.sh`를 실행하면 새 버전으로 명령이 전환됩니다. 현재 RC에서는 같은 버전의 안전한 재설치까지만 자동 검증하며, 서로 다른 시험판 사이의 미완료 실행 호환성은 아직 보장하지 않습니다.
+
+```bash
+"$HOME/.local/lib/omluke/uninstall.sh"
+```
+
+기본 제거는 OML 프로그램과 실행 명령만 삭제합니다. 프로젝트의 `.oml`, 이미 수정된 파일, Codex CLI와 로그인 정보는 유지합니다. `.oml`까지 직접 삭제하면 실행 이력·재개 정보·복구 지점이 사라집니다.
+
+macOS 후보는 아직 Developer ID 서명·공증을 마치지 않아 Gatekeeper 경고 없이 설치되는 정식 배포판이 아닙니다. Gatekeeper를 끄거나 우회하는 명령은 제공하지 않습니다. 자세한 검증 범위는 [시험 배포 준비](docs/distribution.md)를 확인하세요.
+
+## 소스에서 개발하기
 
 소스에서 개발·패키징하려면 **JDK 21**이 필요합니다. Gradle은 저장소의 Wrapper를 사용하므로 별도로 설치할 필요가 없습니다. 검증된 자체 포함 개발 패키지는 Java 21을 내장하므로 그 압축본을 실행하는 사용자는 OML용 Java를 설치하지 않습니다.
 
@@ -86,11 +158,11 @@ Windows에서 기본 테스트 명령은 다음과 같습니다. 파일·프로�
 
 Java 21 LTS · Gradle Kotlin DSL · JUnit 5 · 단일 그래프 커널. Spring Boot나 데이터베이스 없이 로컬에서 동작합니다. 그래프 코어는 AI·네트워크 없이 테스트합니다.
 
-## 배포 계획
+## 배포 상태와 계획
 
-macOS·Linux에서 OML 전용 Java 런타임을 포함한 앱 이미지와 `tar.gz`를 만들고, 외부 Java가 없는 환경에서 실행하는 검증까지 구현했습니다. 재현 명령과 크기 근거는 [자체 포함 개발 패키지](docs/distribution.md)에 있습니다.
+macOS·Linux에서 OML 전용 Java 런타임을 포함한 앱 이미지와 `tar.gz`를 만들고, 외부 Java가 없는 환경의 실행과 격리된 설치·재설치·제거를 검증합니다. 재현 명령과 크기 근거는 [시험 배포 준비](docs/distribution.md)에 있습니다.
 
-아직 서명·공증·설치·삭제까지 검증한 공개 릴리스는 아닙니다. 아래 설치 경로는 다음 배포 계획입니다.
+아직 GitHub Release를 게시하거나 사용자 실기기 설치, 서명·공증을 완료한 공개 릴리스는 아닙니다. 다음 단계에서 드라이런 산출물을 직접 확인한 뒤 명시적으로 게시합니다.
 
 - 검증한 운영체제별 패키지를 GitHub Releases로 제공해, 사용자가 OML 실행을 위해 Java나 Node.js를 따로 설치하지 않도록 할 예정입니다.
 - 설치 검증 후 macOS는 Homebrew, Windows는 WinGet을 연결하고, Linux는 우선 GitHub Releases를 사용합니다.

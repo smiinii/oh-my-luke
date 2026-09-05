@@ -39,6 +39,28 @@ class OmlukeCliTest {
     Path projectRoot;
 
     @Test
+    void printsStandardHelpAndProductVersionWithoutStartingAJob() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ByteArrayOutputStream errors = new ByteArrayOutputStream();
+        OmlukeCli cli = new OmlukeCli(
+                service(),
+                GraphResolver.none(),
+                permissionManager(),
+                new PrintStream(output, true, StandardCharsets.UTF_8),
+                new PrintStream(errors, true, StandardCharsets.UTF_8));
+
+        assertEquals(0, cli.execute(new String[] {"--help"}));
+        assertEquals(0, cli.execute(new String[] {"--version"}));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("Oh My Luke"));
+        assertTrue(text.contains("사용법: omluke start"));
+        assertTrue(text.contains("omluke " + OmlukeApplication.productVersion()));
+        assertEquals("0.1.0-rc.1", OmlukeApplication.productVersion());
+        assertEquals("", errors.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
     void inspectCancelAndResumeCommandsUseDurableRunState() {
         GraphDefinition graph = graph();
         ManagedRunService runs = service();

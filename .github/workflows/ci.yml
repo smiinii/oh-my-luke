@@ -48,7 +48,8 @@ jobs:
           name: omluke-${{ runner.os }}-${{ runner.arch }}
           path: |
             build/package/*.tar.gz
-            build/package/evidence/package-evidence.json
+            build/package/*.tar.gz.sha256
+            build/package/evidence/*.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
