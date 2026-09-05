@@ -52,7 +52,7 @@ Auto는 별도 실행 엔진이나 AI 라우터가 아닙니다. 작업표의 �
 | 파일 수정 | 수정 단계마다 기존 UTF-8 파일 하나, 64 KiB 이하; 다중 파일 트랜잭션 없음 |
 | 실행 관리 | 시작 시 자동/수동 모드 선택, 작업표 기반 실행·조건 분기, 승인·확인·취소·재개 |
 | 프로젝트 스캔 | 별도 Java API로 제공하며 CLI의 자동 컨텍스트·모드 선택에는 아직 미연결 |
-| 배포 | macOS ARM64·Linux x64 자체 포함 공개 RC와 체크섬 |
+| 배포 | macOS ARM64·Linux x64 자체 포함 공개 RC, 체크섬과 Homebrew |
 | 남은 작업 | 자동 컨텍스트, 비교 실험, 사용성 확장, 지원 플랫폼 확대 |
 
 - 지정한 검사를 통과한 것과 모든 요구사항의 정확성을 증명한 것은 다릅니다. 검증 기준은 사용자가 정합니다.
@@ -73,9 +73,19 @@ Windows, Intel Mac과 다른 Linux 배포판은 아직 지원 대상으로 선�
 
 [`v0.1.0-rc.1` Release](https://github.com/smiinii/oh-my-luke/releases/tag/v0.1.0-rc.1)에는 운영체제별 `tar.gz`, 개별 `.sha256`, 통합 `SHA256SUMS`와 CI 검증 JSON이 함께 있습니다. 먼저 자신의 운영체제용 압축본과 같은 이름의 체크섬을 내려받습니다.
 
-### 시험판을 내려받아 설치하기
+### Homebrew로 설치하기
 
-자신의 운영체제용 `tar.gz`와 같은 이름의 `.sha256`을 함께 받은 뒤 먼저 검증합니다.
+가장 간단한 설치 방법입니다. 완전히 지정한 Formula 이름을 사용하므로 Homebrew는 `smiinii/tap` 전체가 아니라 OML Formula만 신뢰합니다.
+
+```bash
+brew install smiinii/tap/oh-my-luke
+omluke --version
+omluke --help
+```
+
+Formula는 OML 전용 Java를 함께 설치하므로 Java나 Node.js가 필요하지 않습니다. 실제 AI 작업에 사용하는 Codex CLI와 사용자 로그인은 별도입니다. Formula의 내용과 CI는 [`smiinii/homebrew-tap`](https://github.com/smiinii/homebrew-tap)에서 확인할 수 있습니다.
+
+### 시험판을 내려받아 설치하기
 
 ```bash
 # macOS
@@ -97,13 +107,7 @@ omluke --version
 omluke --help
 ```
 
-`export`는 현재 터미널에만 적용됩니다. macOS 기본 zsh에서 다음 터미널부터도 사용하려면 한 번만 아래처럼 저장합니다.
-
-```bash
-printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.zprofile"
-```
-
-Linux에서 bash를 사용하면 같은 줄을 `~/.profile`에 저장합니다.
+`export`는 현재 터미널에만 적용됩니다. 계속 사용하려면 같은 PATH 설정을 macOS zsh의 `~/.zprofile` 또는 Linux bash의 `~/.profile`에 한 번 저장합니다.
 
 기본 설치 위치는 `$HOME/.local`이며 관리자 권한을 요구하지 않습니다. 설치 경로에 심볼릭 링크가 포함되거나 패키지의 운영체제·CPU가 현재 기기와 다르면 쓰기 전에 거부합니다. OML용 Java는 패키지 안에 있지만, 실제 AI 작업에는 Codex CLI 설치와 사용자 로그인이 별도로 필요합니다.
 
@@ -123,6 +127,16 @@ omluke resume <run-id>
 ### 다시 설치하고 제거하기
 
 자동 업데이트는 아직 없습니다. 진행 중인 실행을 먼저 끝낸 뒤 새 시험판을 검증하고 그 묶음의 `install.sh`를 실행하면 새 버전으로 명령이 전환됩니다. 현재 RC에서는 같은 버전의 안전한 재설치까지만 자동 검증하며, 서로 다른 시험판 사이의 미완료 실행 호환성은 아직 보장하지 않습니다.
+
+Homebrew로 설치했다면 다음 명령으로 확인·업데이트·제거합니다.
+
+```bash
+brew update
+brew upgrade oh-my-luke
+brew uninstall oh-my-luke
+```
+
+압축본의 `install.sh`로 직접 설치했다면 다음 제거 스크립트를 사용합니다.
 
 ```bash
 "$HOME/.local/lib/omluke/uninstall.sh"
@@ -162,10 +176,10 @@ Java 21 LTS · Gradle Kotlin DSL · JUnit 5 · 단일 그래프 커널. Spring B
 
 macOS·Linux에서 OML 전용 Java 런타임을 포함한 앱 이미지와 `tar.gz`를 만들고, 외부 Java가 없는 환경의 실행과 격리된 설치·재설치·제거를 검증합니다. 재현 명령과 크기 근거는 [시험 배포 준비](docs/distribution.md)에 있습니다.
 
-`v0.1.0-rc.1`은 공개 시험판이며 안정판이 아닙니다. 사용자 실기기 설치 확인과 Homebrew 검증을 진행하고 있으며, macOS 서명·공증은 완료하지 않았습니다.
+`v0.1.0-rc.1`은 공개 시험판이며 안정판이 아닙니다. Homebrew Formula CI까지 통과했으며 사용자 실기기 확인을 진행하고 있습니다. macOS 서명·공증은 완료하지 않았습니다.
 
 - 검증한 운영체제별 패키지를 GitHub Releases로 제공해, 사용자가 OML 실행을 위해 Java나 Node.js를 따로 설치하지 않게 합니다.
-- 설치 검증 후 macOS는 Homebrew, Windows는 WinGet을 연결하고, Linux는 우선 GitHub Releases를 사용합니다.
+- macOS와 Linux용 Homebrew Formula를 제공하며, Windows는 향후 WinGet을 연결할 계획입니다.
 - npm 배포는 계획하지 않습니다. 실제 설치 테스트를 통과한 운영체제만 지원 대상으로 표시합니다.
 
 연결할 AI CLI의 설치·로그인 요구사항은 별도입니다. 공개 전에는 설치·첫 실행·업데이트·삭제 절차를 실제 환경에서 검증하고 안내합니다.

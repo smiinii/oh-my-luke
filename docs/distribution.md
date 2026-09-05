@@ -111,6 +111,12 @@ OML은 로그인 시 시작되거나 계속 실행되는 데몬이 아니다. `o
 
 `cancel`은 일시정지가 아니고 활동 중인 노드를 즉시 강제 종료하지도 않는다.
 
+## Homebrew 설치 경로
+
+공개 RC의 고정 URL과 SHA-256을 사용하는 Formula는 [`smiinii/homebrew-tap`](https://github.com/smiinii/homebrew-tap)에 둔다. `brew install smiinii/tap/oh-my-luke`는 현재 운영체제에 맞는 자체 포함 runtime을 Homebrew Cellar에 설치하고 `omluke` 실행 wrapper를 연결한다. OML의 `install.sh`를 실행하지 않으므로 `$HOME/.local` 설치와 섞이지 않는다.
+
+Formula PR은 style·strict online audit 뒤 깨끗한 macOS 환경에서 실제 설치, `--version`, `--help`를 검사한다. 완전히 지정한 이름으로 설치하면 사용자는 tap 전체가 아니라 이 Formula만 신뢰한다. 업데이트와 제거는 각각 `brew upgrade oh-my-luke`, `brew uninstall oh-my-luke`로 Homebrew가 관리하며 프로젝트의 `.oml`과 Codex 상태는 설치 prefix 밖에 남는다.
+
 ## CI와 공개 경계
 
 드라이런은 고정된 `macos-15` ARM64와 `ubuntu-24.04` x64, Temurin `21.0.12+8.0.LTS`에서 실행한다. 워크플로 전체 권한은 `contents: read`뿐이며 Release API 호출과 태그 생성 단계가 없다. 따라서 PR이나 드라이런만으로 Release를 공개할 수 없다.

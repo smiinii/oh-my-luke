@@ -34,6 +34,7 @@ OML은 AI 모델 자체가 아니다. 사용자의 목표를 작은 단계로 �
 11. [Java를 포함한 개발 패키지](11-self-contained-package.md)
 12. [v0.1.0-rc.1 시험 배포 준비](12-trial-release-preparation.md)
 13. [검증된 GitHub prerelease 게시](13-github-prerelease.md)
+14. [Homebrew 한 줄 설치](14-homebrew-installation.md)
 
 ## 지금 가능한 것
 
@@ -55,12 +56,13 @@ OML은 AI 모델 자체가 아니다. 사용자의 목표를 작은 단계로 �
 - `start`의 자동/수동 선택, 명시 조건에 따른 Auto 이유 표시·저장, 재개 시 선택 유지
 - macOS·Linux에서 전용 Java 21을 포함한 개발 패키지 생성·압축본 실행·크기 검증
 - `v0.1.0-rc.1` 설치·재설치·제거와 두 운영체제 공개 prerelease 게시
+- 공개 RC를 고정된 체크섬으로 설치하는 Homebrew Formula와 실제 설치 CI
 
 ## 아직 남은 주요 작업
 
 1. Baseline 대 OML 비교 실험
 2. 검증·자동 컨텍스트·사용성 확장
-3. 공개 시험판의 사용자 실기기·Homebrew 설치 확인
+3. 공개 시험판의 사용자 실기기 설치 확인
 4. 서로 다른 버전의 업데이트·롤백, 서명·공증과 지원 범위 확정
 
 ## 다른 문서와 증거
