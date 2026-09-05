@@ -1,8 +1,8 @@
 # v0.1.0-rc.1 시험 배포 준비
 
-OML은 Java로 개발하지만 사용자가 OML 자체를 실행하려고 Java나 Node.js를 설치하지 않게 한다. 현재는 macOS Apple Silicon과 Linux x64용 `v0.1.0-rc.1` 후보를 만들고, **공개 전에** 다운로드 파일과 설치 수명주기를 검증하는 단계다.
+OML은 Java로 개발하지만 사용자가 OML 자체를 실행하려고 Java나 Node.js를 설치하지 않게 한다. macOS Apple Silicon과 Linux x64용 `v0.1.0-rc.1`을 운영체제별로 검증하고 공개 GitHub prerelease로 게시한다.
 
-GitHub Release, 태그, 서명된 설치 프로그램은 아직 만들지 않는다. PR에서는 쓰기 권한이 없는 드라이런만 실행한다.
+PR에서는 쓰기 권한이 없는 드라이런만 실행한다. 공개는 드라이런과 사용자 실기기 확인을 통과한 뒤, `main`의 정확한 40자리 커밋을 입력한 수동 워크플로만 수행한다.
 
 ## 배포 묶음의 구성
 
@@ -73,7 +73,7 @@ JSON evidence의 `ranWithEmptyPath`와 `bundledJavaVerified`는 실제 위 실�
 - 버전·운영체제·CPU와 외부 Java 없는 실행 근거가 맞는가
 - 정렬된 통합 `SHA256SUMS`가 만들어지는가
 
-결과는 `omluke-0.1.0-rc.1-release-bundle`이라는 14일짜리 Actions artifact다. 이것은 공개 GitHub Release가 아니며 로그인과 만료 제한이 있다.
+드라이런 결과는 `omluke-0.1.0-rc.1-release-bundle`이라는 14일짜리 Actions artifact다. 게시 워크플로는 같은 검증을 새로 수행하고 통과한 파일만 공개 prerelease에 영구 첨부한다. Release에는 운영체제별 압축본·개별 sidecar·통합 `SHA256SUMS`·evidence가 함께 올라간다.
 
 ## 설치, 전환과 제거 원칙
 
@@ -113,14 +113,14 @@ OML은 로그인 시 시작되거나 계속 실행되는 데몬이 아니다. `o
 
 ## CI와 공개 경계
 
-드라이런은 고정된 `macos-15` ARM64와 `ubuntu-24.04` x64, Temurin `21.0.12+8.0.LTS`에서 실행한다. 워크플로 전체 권한은 `contents: read`뿐이며 Release API 호출과 태그 생성 단계가 없다. 따라서 PR이나 수동 드라이런만으로 Release를 공개할 수 없다.
+드라이런은 고정된 `macos-15` ARM64와 `ubuntu-24.04` x64, Temurin `21.0.12+8.0.LTS`에서 실행한다. 워크플로 전체 권한은 `contents: read`뿐이며 Release API 호출과 태그 생성 단계가 없다. 따라서 PR이나 드라이런만으로 Release를 공개할 수 없다.
 
-실제 게시 자동화와 `contents: write` 권한은 사용자 실기기 확인 후 별도 변경으로 추가한다.
+게시 워크플로는 수동 실행만 허용한다. 입력 커밋이 40자리 SHA이고 현재 `main`의 HEAD이며 제품 버전이 RC와 같은지 두 운영체제 job에서 확인한다. 모든 패키지 검증이 통과한 뒤 publish job 하나에만 `contents: write`를 주고, 기존 태그나 Release가 있으면 덮어쓰지 않고 중단한다.
 
 ## 아직 지원한다고 말하지 않는 것
 
-- 공개 GitHub prerelease 또는 안정판과 장기 다운로드
-- macOS Developer ID 서명·공증, DMG/PKG, Homebrew
+- 안정판과 장기 지원 약속
+- macOS Developer ID 서명·공증, DMG/PKG
 - 서로 다른 버전 사이의 업데이트·롤백 호환성
 - Linux 배포판별 호환성, DEB/RPM
 - Windows, Intel Mac, WinGet
@@ -128,4 +128,4 @@ OML은 로그인 시 시작되거나 계속 실행되는 데몬이 아니다. `o
 
 현재 네이티브 앱 버전은 RC 접미사를 표현하지 못해 `0.1.0-rc.1`과 향후 `0.1.0`이 같은 `1.1.0`으로 매핑된다. 사용자 영역의 버전 디렉터리는 제품 버전 전체로 구분하지만, 정식 서명·공증 및 안정판 전에 네이티브 버전 정책을 별도로 확정해야 한다.
 
-macOS의 현재 번들 무결성 검사는 Developer ID 서명·공증을 대신하지 않는다. 체크섬도 파일 손상 탐지 수단이지 게시자 신원 증명은 아니다. 사용자 실기기에서 설치·첫 실행·작업·제거를 확인한 뒤에만 공개 지원 범위를 정한다.
+macOS의 현재 번들 무결성 검사는 Developer ID 서명·공증을 대신하지 않는다. 체크섬도 파일 손상 탐지 수단이지 게시자 신원 증명은 아니다. prerelease의 실제 설치 결과를 더 수집한 뒤에만 안정판 지원 범위를 정한다.

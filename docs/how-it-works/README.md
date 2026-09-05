@@ -33,6 +33,7 @@ OML은 AI 모델 자체가 아니다. 사용자의 목표를 작은 단계로 �
 10. [자동·수동 선택과 선택을 유지하는 재개](10-auto-and-manual-start.md)
 11. [Java를 포함한 개발 패키지](11-self-contained-package.md)
 12. [v0.1.0-rc.1 시험 배포 준비](12-trial-release-preparation.md)
+13. [검증된 GitHub prerelease 게시](13-github-prerelease.md)
 
 ## 지금 가능한 것
 
@@ -53,13 +54,13 @@ OML은 AI 모델 자체가 아니다. 사용자의 목표를 작은 단계로 �
 - 정적 `workflow` 선언, AI 없는 선검사, 순차 분기·합류, 사람 승인 결정과 재개
 - `start`의 자동/수동 선택, 명시 조건에 따른 Auto 이유 표시·저장, 재개 시 선택 유지
 - macOS·Linux에서 전용 Java 21을 포함한 개발 패키지 생성·압축본 실행·크기 검증
-- `v0.1.0-rc.1` 설치·재설치·제거와 두 운영체제 Release 묶음의 비공개 드라이런 검증
+- `v0.1.0-rc.1` 설치·재설치·제거와 두 운영체제 공개 prerelease 게시
 
 ## 아직 남은 주요 작업
 
 1. Baseline 대 OML 비교 실험
 2. 검증·자동 컨텍스트·사용성 확장
-3. 드라이런 묶음의 사용자 실기기 확인과 공개 GitHub prerelease
+3. 공개 시험판의 사용자 실기기·Homebrew 설치 확인
 4. 서로 다른 버전의 업데이트·롤백, 서명·공증과 지원 범위 확정
 
 ## 다른 문서와 증거

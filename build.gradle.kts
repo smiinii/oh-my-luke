@@ -210,7 +210,9 @@ tasks.test {
         layout.projectDirectory.file("packaging/install.sh"),
         layout.projectDirectory.file("packaging/uninstall.sh"),
         layout.projectDirectory.file("scripts/release/assemble-bundle.sh"),
-        layout.projectDirectory.file(".github/workflows/release-candidate-dry-run.yml")
+        layout.projectDirectory.file(".github/workflows/release-candidate-dry-run.yml"),
+        layout.projectDirectory.file(".github/workflows/publish-release-candidate.yml"),
+        layout.projectDirectory.file(".github/release-notes/v0.1.0-rc.1.md")
     )
     testLogging {
         events("failed", "skipped")

@@ -1,32 +1,25 @@
-name: Release candidate dry run
+name: Publish release candidate
+
+run-name: Publish v0.1.0-rc.1 from ${{ inputs.commit_sha }}
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/release-candidate-dry-run.yml"
-      - ".github/workflows/publish-release-candidate.yml"
-      - ".github/release-notes/**"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - "gradle/**"
-      - "gradlew"
-      - "packaging/**"
-      - "scripts/release/**"
-      - "examples/**"
-      - "src/main/**"
-      - "src/test/java/io/ohmyluke/distribution/**"
   workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full 40-character commit SHA from main to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-candidate-dry-run-${{ github.ref }}
-  cancel-in-progress: true
+  group: publish-v0.1.0-rc.1
+  cancel-in-progress: false
 
 env:
   RC_VERSION: 0.1.0-rc.1
+  RELEASE_COMMIT: ${{ inputs.commit_sha }}
 
 jobs:
   package:
@@ -46,6 +39,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_COMMIT }}
+          fetch-depth: 0
+      - name: Verify release input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(git rev-parse origin/main)" = "$RELEASE_COMMIT"
+          declared_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' build.gradle.kts)"
+          test "$declared_version" = "$RC_VERSION"
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -60,7 +66,7 @@ jobs:
       - name: Enable unprivileged user namespaces for bubblewrap tests
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Build and verify release candidate package
+      - name: Build and verify release package
         run: ./gradlew clean build verifyPackagedApp -PreleaseTag="v${RC_VERSION}"
       - name: Verify reproducible archive and checksum
         shell: bash
@@ -78,11 +84,10 @@ jobs:
           ./gradlew packageArchive --rerun-tasks
           second_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
           test "$first_sha" = "$second_sha"
-          echo "Reproducible release candidate SHA-256: $second_sha"
       - name: Upload verified platform asset
         uses: actions/upload-artifact@v7
         with:
-          name: rc-${{ matrix.classifier }}
+          name: publish-${{ matrix.classifier }}
           path: |
             build/package/omluke-${{ env.RC_VERSION }}-${{ matrix.classifier }}.tar.gz
             build/package/omluke-${{ env.RC_VERSION }}-${{ matrix.classifier }}.tar.gz.sha256
@@ -91,24 +96,46 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-  assemble:
+  publish:
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_COMMIT }}
+          fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          pattern: rc-*
+          pattern: publish-*
           path: build/release-input
           merge-multiple: true
-      - name: Assemble and verify release candidate bundle
+      - name: Assemble and verify release bundle
         run: scripts/release/assemble-bundle.sh "$RC_VERSION" build/release-input build/release-bundle
-      - name: Upload release candidate dry-run bundle
-        uses: actions/upload-artifact@v7
-        with:
-          name: omluke-${{ env.RC_VERSION }}-release-bundle
-          path: build/release-bundle/*
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0
+      - name: Ensure tag and release do not exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/v${RC_VERSION}" >/dev/null 2>&1; then
+            echo "Tag already exists: v${RC_VERSION}" >&2
+            exit 1
+          fi
+          if gh release view "v${RC_VERSION}" >/dev/null 2>&1; then
+            echo "Release already exists: v${RC_VERSION}" >&2
+            exit 1
+          fi
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${RC_VERSION}" build/release-bundle/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_COMMIT" \
+            --title "Oh My Luke v${RC_VERSION}" \
+            --notes-file ".github/release-notes/v${RC_VERSION}.md" \
+            --prerelease \
+            --latest=false
