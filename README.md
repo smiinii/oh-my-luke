@@ -2,7 +2,7 @@
 
 [![Package downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsmiinii%2Foh-my-luke%2Fdownload-stats%2Fdownloads.json&cacheSeconds=3600)](https://github.com/smiinii/oh-my-luke/releases)
 
-> 쓰던 AI는 그대로, 작업은 검증하고 이어서.
+쓰던 AI는 그대로, 작업은 검증하고 이어서.
 
 Oh My Luke(OML)는 사용자가 이미 쓰는 AI CLI를 연결해 개발 작업의 실행·검증·재시도·재개를 관리하는 **Java 기반 로컬 AI 하네스**입니다.
 
