@@ -1,10 +1,16 @@
 # Oh My Luke
 
+[![Package downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsmiinii%2Foh-my-luke%2Fdownload-stats%2Fdownloads.json&cacheSeconds=3600)](https://github.com/smiinii/oh-my-luke/releases)
+
 > 쓰던 AI는 그대로, 작업은 검증하고 이어서.
 
 Oh My Luke(OML)는 사용자가 이미 쓰는 AI CLI를 연결해 개발 작업의 실행·검증·재시도·재개를 관리하는 **Java 기반 로컬 AI 하네스**입니다.
 
-불필요한 AI 호출과 반복 입력을 줄이면서, 사용자가 정한 완료 조건에 도달하도록 돕는 것을 목표로 합니다. 현재는 Codex CLI를 연결한 개발 단계입니다.
+불필요한 AI 호출과 반복 입력을 줄이면서, 사용자가 정한 완료 조건에 도달하도록 돕는 것을 목표로 합니다. 현재는 Codex CLI를 연결한 **공개 시험판(`v0.1.0-rc.1`)**입니다.
+
+**실험 상태:** Codex 직접 실행·OMX·OML의 성공률과 토큰 사용량 비교를 [이슈 #32](https://github.com/smiinii/oh-my-luke/issues/32)에서 준비 중입니다. 실제 비교 실행은 아직 시작하지 않았으며, 토큰 절감 효과는 입증 전입니다.
+
+[설치](#homebrew로-설치하기) · [첫 작업 예제](docs/start-usage.md) · [현재 범위와 한계](#현재-범위와-한계) · [피드백과-기여](#피드백과-기여)
 
 ## 왜 만드나요?
 
@@ -72,6 +78,8 @@ Auto는 별도 실행 엔진이나 AI 라우터가 아닙니다. 작업표의 �
 Windows, Intel Mac과 다른 Linux 배포판은 아직 지원 대상으로 선언하지 않습니다. 패키지를 설치할 수 있다는 것과 모든 개발 도구 실행을 지원한다는 것도 구분합니다.
 
 [`v0.1.0-rc.1` Release](https://github.com/smiinii/oh-my-luke/releases/tag/v0.1.0-rc.1)에는 운영체제별 `tar.gz`, 개별 `.sha256`, 통합 `SHA256SUMS`와 CI 검증 JSON이 함께 있습니다. 먼저 자신의 운영체제용 압축본과 같은 이름의 체크섬을 내려받습니다.
+
+상단 배지는 공개 Release의 `omluke-*.tar.gz`·`omluke-*.zip` 누적 다운로드 횟수입니다. 체크섬·검증 JSON은 제외하며, 재다운로드와 자동 검증이 포함될 수 있어 고유 사용자 수와 다릅니다. 매일 자동 집계하며 표시에는 캐시 지연이 있을 수 있습니다.
 
 ### Homebrew로 설치하기
 
@@ -176,13 +184,23 @@ Java 21 LTS · Gradle Kotlin DSL · JUnit 5 · 단일 그래프 커널. Spring B
 
 macOS·Linux에서 OML 전용 Java 런타임을 포함한 앱 이미지와 `tar.gz`를 만들고, 외부 Java가 없는 환경의 실행과 격리된 설치·재설치·제거를 검증합니다. 재현 명령과 크기 근거는 [시험 배포 준비](docs/distribution.md)에 있습니다.
 
-`v0.1.0-rc.1`은 공개 시험판이며 안정판이 아닙니다. Homebrew Formula CI까지 통과했으며 사용자 실기기 확인을 진행하고 있습니다. macOS 서명·공증은 완료하지 않았습니다.
+`v0.1.0-rc.1`은 공개 시험판이며 안정판이 아닙니다. Homebrew Formula CI와 개발자 macOS 기기의 설치·승인·재개·업데이트 확인·제거를 검증했습니다. 더 다양한 환경의 피드백을 받고 있으며, macOS 서명·공증은 완료하지 않았습니다.
 
 - 검증한 운영체제별 패키지를 GitHub Releases로 제공해, 사용자가 OML 실행을 위해 Java나 Node.js를 따로 설치하지 않게 합니다.
 - macOS와 Linux용 Homebrew Formula를 제공하며, Windows는 향후 WinGet을 연결할 계획입니다.
 - npm 배포는 계획하지 않습니다. 실제 설치 테스트를 통과한 운영체제만 지원 대상으로 표시합니다.
 
-연결할 AI CLI의 설치·로그인 요구사항은 별도입니다. 공개 전에는 설치·첫 실행·업데이트·삭제 절차를 실제 환경에서 검증하고 안내합니다.
+연결할 AI CLI의 설치·로그인 요구사항은 별도입니다. 새 배포와 지원 환경을 추가할 때 설치·첫 실행·업데이트·삭제 절차를 검증하고 안내합니다.
+
+## 피드백과 기여
+
+시험판을 사용하며 겪은 오류, 설치 문제, 이해하기 어려운 사용법과 기능 제안은 [GitHub Issues](https://github.com/smiinii/oh-my-luke/issues/new/choose)에 남겨 주세요. 코드를 수정하지 않아도 피드백할 수 있습니다.
+
+- **오류·설치 문제:** 운영체제·CPU, `omluke --version`, AI 관련 문제라면 `codex --version`, 실행 명령, 기대한 결과와 실제 결과, 재현 방법을 적어 주세요.
+- **사용성·기능 제안:** 하려던 작업과 막힌 지점, 원하는 동작을 알려 주세요.
+- **코드·문서 수정:** [Pull Request](https://github.com/smiinii/oh-my-luke/pulls)로 제안해 주세요. 큰 기능 변경은 먼저 이슈로 범위를 논의하고, 코드 수정에는 관련 테스트 결과를 첨부해 주세요.
+
+로그는 문제 재현에 필요한 부분만 공유하고 API 키·로그인 토큰·개인정보·비공개 코드는 제거해 주세요. 비교 실험의 조건과 결과에 대한 의견은 [이슈 #32](https://github.com/smiinii/oh-my-luke/issues/32)에 남겨 주세요.
 
 ## 상세 문서
 

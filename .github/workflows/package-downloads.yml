@@ -1,0 +1,71 @@
+name: Package downloads badge
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  release:
+    types: [published]
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/package-downloads.yml'
+      - 'scripts/metrics/**'
+  pull_request:
+    paths:
+      - '.github/workflows/package-downloads.yml'
+      - 'scripts/metrics/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-downloads-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test package filtering and usage collection
+        run: node --test scripts/metrics/package-downloads.test.mjs
+
+  update:
+    if: github.event_name != 'pull_request' && github.repository == 'smiinii/oh-my-luke'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Collect all public package downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/metrics/package-downloads.mjs "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/downloads.json"
+      - name: Check out isolated badge data branch
+        uses: actions/checkout@v7
+        with:
+          ref: download-stats
+          path: badge-data
+      - name: Publish only when the count changes
+        working-directory: badge-data
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/downloads.json" downloads.json
+          git add downloads.json
+          if git diff --cached --quiet; then
+            echo "Package download count unchanged"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: update package download count'
+          git push origin HEAD:download-stats
