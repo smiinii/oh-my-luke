@@ -1,0 +1,11 @@
+{
+  "id": "c",
+  "goal": "CheckoutService와 QuoteService의 중복 검증을 OrderLineValidator.validate(OrderLine)로 추출하세요. 두 서비스가 공통 검증기를 사용하고 중복 검증 분기를 제거해야 합니다. 공개 API·계산 결과·예외 종류·메시지·검증 순서를 유지하고 외부 라이브러리는 추가하지 마세요.",
+  "timeoutSeconds": 1200,
+  "requiredCommand": [
+    "./gradlew",
+    "test"
+  ],
+  "requiresAddedTests": false,
+  "synthetic": false
+}

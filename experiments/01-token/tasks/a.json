@@ -1,0 +1,11 @@
+{
+  "id": "a",
+  "goal": "50,000원 이상 무료 배송인데 정확히 50,000원에서 배송비가 발생합니다. 오류를 수정하고 경계값 회귀 테스트를 추가하세요. 기존 공개 메서드와 다른 금액 구간의 동작을 유지하세요. 0원·49,999원 배송비는 3,000원, 50,000원·50,001원은 0원입니다.",
+  "timeoutSeconds": 1200,
+  "requiredCommand": [
+    "./gradlew",
+    "test"
+  ],
+  "requiresAddedTests": true,
+  "synthetic": false
+}

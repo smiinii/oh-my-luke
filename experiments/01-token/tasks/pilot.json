@@ -1,0 +1,11 @@
+{
+  "id": "pilot",
+  "goal": "QuantityLabel.label(int quantity)에서 수량 1은 item, 나머지 0~99는 items를 반환하도록 수정하세요. 기존 API를 유지하세요.",
+  "timeoutSeconds": 1200,
+  "requiredCommand": [
+    "./gradlew",
+    "test"
+  ],
+  "requiresAddedTests": false,
+  "synthetic": false
+}

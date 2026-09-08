@@ -1,0 +1,11 @@
+{
+  "id": "b",
+  "goal": "OrderCalculator에 total(long subtotal, long discountAmount)를 추가하세요. 상품 금액에만 정액 할인하고 무료 배송은 할인 전 금액으로 판단하세요. 상품 금액보다 큰 할인은 상품 금액까지만 적용하세요. 새 메서드의 음수 입력은 IllegalArgumentException으로 거부하며 기존 total(subtotal)을 유지하세요. 테스트도 추가하세요. (40,000,5,000)→38,000; (50,000,5,000)→45,000; (10,000,20,000)→3,000; (0,0)→3,000.",
+  "timeoutSeconds": 1200,
+  "requiredCommand": [
+    "./gradlew",
+    "test"
+  ],
+  "requiresAddedTests": true,
+  "synthetic": false
+}

@@ -1,0 +1,60 @@
+name: Experiment preparation (no AI)
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/01-token/**'
+      - '.github/workflows/experiment-preparation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/01-token/**'
+      - '.github/workflows/experiment-preparation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-benchmark:
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21.0.12+8.0.LTS'
+      - name: Install Linux filesystem and PID isolation
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Test fixtures, judges, isolation, lifecycle and accounting
+        env:
+          PYTHONPATH: experiments/01-token/runner
+        run: python3 -m unittest discover -s experiments/01-token/tests -v
+      - name: Generate synthetic end-to-end evidence
+        run: python3 experiments/01-token/runner/bench.py dry-run "$RUNNER_TEMP/oml-preparation" --task a
+      - name: Verify public Gradle test command on the repaired fixture
+        run: |
+          cd "$RUNNER_TEMP/oml-preparation/a-1-codex/worker/workspace"
+          ./gradlew --no-daemon test
+      - name: Upload synthetic evidence only
+        uses: actions/upload-artifact@v7
+        with:
+          name: preparation-evidence-${{ runner.os }}
+          path: |
+            ${{ runner.temp }}/oml-preparation/manifest.json
+            ${{ runner.temp }}/oml-preparation/results.json
+            ${{ runner.temp }}/oml-preparation/report.md
+            ${{ runner.temp }}/oml-preparation/summary.csv
+          if-no-files-found: error
+          retention-days: 7
