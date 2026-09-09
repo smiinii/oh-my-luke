@@ -63,6 +63,7 @@ class StartProcessTest {
                 .map(entry -> Path.of(entry).toAbsolutePath().toString())
                 .collect(java.util.stream.Collectors.joining(File.pathSeparator));
         List<String> command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Duser.home=" + Files.createDirectories(directory.resolve("user-home")),
                 "-cp", classpath, OmlukeApplication.class.getName()));
         command.addAll(List.of(args));
         Path output = Files.createTempFile(directory, "start-cli-", ".txt");
@@ -70,6 +71,7 @@ class StartProcessTest {
                 .redirectErrorStream(true).redirectOutput(output.toFile());
         // This fixture contains no AI node; also prevent accidental lookup of the user's Codex CLI.
         builder.environment().put("PATH", directory.resolve("no-executables").toString());
+        builder.environment().put("HOME", directory.resolve("user-home").toString());
         Process process = builder.start();
         process.getOutputStream().close();
         try {

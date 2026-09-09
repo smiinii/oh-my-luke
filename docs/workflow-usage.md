@@ -70,7 +70,7 @@ omluke approve edit-demo REQUEST_ID
 omluke resume edit-demo
 ```
 
-개발 빌드에서는 `omluke` 대신 앞에서 만든 `"$OML_BIN"`을 사용한다. 이 예제는 실제 사용자 계정 사용량이 발생할 수 있다. 모델은 `--model YOUR_MODEL --reasoning low`로 선택한다. 우선순위는 CLI 공통 재정의→각 EDIT 작업표→Codex 설정이며, 재개에서는 처음 선택을 유지한다.
+개발 빌드에서는 `omluke` 대신 앞에서 만든 `"$OML_BIN"`을 사용한다. 이 예제는 실제 사용자 계정 사용량이 발생할 수 있다. 모델은 `--model YOUR_MODEL --reasoning low`로 선택한다. 모델 우선순위는 CLI 공통 재정의 → 각 EDIT 작업표 → [선택된 OML 설정](execution-settings.md) → Codex 설정이며, 재개에서는 저장한 선택을 유지한다. 추론 강도에는 OML 프로필 기본값을 추가하지 않았다.
 
 현재 전용 diff 미리보기 명령은 없다. 적용 승인 전 `state.json`의 `state.values`에서 `workflow.step.edit.preset.currentHash`와 `proposalHash`를 확인하고, `.oml/runs/edit-demo/artifacts/preset-content/<해시>.txt` 두 파일을 에디터로 비교한다. 다른 단계 이름이라면 `edit`를 해당 ID로 바꾼다. 승인 요청 문구만 보고 변경 내용을 검토했다고 간주하지 않는다.
 

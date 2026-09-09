@@ -200,7 +200,41 @@ class StartCliTest {
         assertFalse(fixture.runs().inspect("legacy").state().values().containsKey(RunSelection.STATE_KEY));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"start", "run", "workflow"})
+    void profileSelectionReachesTheRuntimeAndResumeDoesNotResolveCurrentSettings(String command) throws Exception {
+        TaskSpec task = new TaskSpec(1, "Make ready", "hello.txt", ExecutionMode.DIRECT, 1, 1_000, 60_000, 2,
+                validation(), null, null);
+        Object spec = switch (command) {
+            case "start" -> new StartSpec(1, new StartTaskSpec(task.goal(), task.file(), 1, 1_000, 60_000, 2,
+                    task.validation(), null, null, false), null);
+            case "workflow" -> new WorkflowSpec(1, "Make ready", "edit", List.of(
+                    WorkflowStep.edit("edit", task, false, "succeeded", "stopped")), 20, 1_000, 60_000);
+            default -> task;
+        };
+        Files.writeString(project.resolve("profile-job.json"), PresetJson.encode(spec));
+        var resolutions = new AtomicInteger();
+        Fixture fixture = fixture(forbiddenPrompt(), () -> {
+            assertEquals(0, resolutions.getAndIncrement(), "current profile must only be read for a new run");
+            return new io.ohmyluke.profile.ExecutionProfile("codex", "oml", "profile-model");
+        });
+        String[] args = command.equals("start")
+                ? new String[] {command, "profile-job.json", "--mode", "auto", "--run-id", "profile-run"}
+                : new String[] {command, "profile-job.json", "--run-id", "profile-run"};
+        assertEquals(0, fixture.cli().execute(args));
+        assertEquals("profile-model", actualTask.get().model());
+        assertEquals(1, calls.get());
+        assertEquals(0, fixture.cli().execute(new String[] {"resume", "profile-run"}));
+        assertEquals("profile-model", actualTask.get().model());
+        assertEquals(1, calls.get());
+        assertEquals(1, resolutions.get());
+    }
+
     private Fixture fixture(StartPrompt prompt) {
+        return fixture(prompt, io.ohmyluke.profile.ExecutionProfile::defaults);
+    }
+
+    private Fixture fixture(StartPrompt prompt, java.util.function.Supplier<io.ohmyluke.profile.ExecutionProfile> profile) {
         Clock clock = Clock.systemUTC();
         var permissions = new ProjectPermissionManager(new ProjectPermissionStore(project), clock);
         var runs = new ManagedRunService(new GraphRunner(new GraphValidator()),
@@ -223,7 +257,7 @@ class StartCliTest {
         var workflows = new WorkflowRunService(project, runtime, permissions, sandbox, clock);
         var starts = new StartRunService(project, presets, workflows, permissions, clock);
         var out = new PrintStream(output, true, StandardCharsets.UTF_8);
-        return new Fixture(new OmlukeCli(runs, GraphResolver.none(), permissions, out, out, presets, workflows, starts, prompt),
+        return new Fixture(new OmlukeCli(runs, GraphResolver.none(), permissions, out, out, presets, workflows, starts, prompt, profile),
                 runs, workflows, permissions);
     }
 

@@ -92,6 +92,13 @@ class PackagedApplicationTest {
         Path codexState = userHome.resolve(".codex/auth.json");
         Files.createDirectories(codexState.getParent());
         Files.writeString(codexState, "user-owned-codex-state");
+        Result setup = run(List.of(launcher.toString(), "setup"), helpProject, true, Map.of("HOME", userHome.toString()));
+        assertEquals(0, setup.exitCode(), setup.output());
+        Result switched = run(List.of(launcher.toString(), "switch", "--scope", "global", "--model", "package-model"),
+                helpProject, true, Map.of("HOME", userHome.toString()));
+        assertEquals(0, switched.exitCode(), switched.output());
+        Path settings = userHome.resolve(".oml/settings.json");
+        String settingsBeforeInstall = sha256(settings);
         Path prefix = directory.toRealPath().resolve("prefix");
         seedPreviousVersion(prefix, os);
         Path previousVersion = prefix.resolve("lib/omluke/versions/0.0.0-test/VERSION");
@@ -155,6 +162,11 @@ class PackagedApplicationTest {
         Result reinstalled = run(List.of("/bin/sh", installer.toString(), "--prefix", prefix.toString()),
                 releaseRoot, false, Map.of("HOME", userHome.toString()));
         assertEquals(0, reinstalled.exitCode(), reinstalled.output());
+        Result repeatedSetup = run(List.of(installedLauncher.toString(), "setup"), helpProject, true,
+                Map.of("HOME", userHome.toString()));
+        assertEquals(0, repeatedSetup.exitCode(), repeatedSetup.output());
+        assertTrue(repeatedSetup.output().contains("package-model"), repeatedSetup.output());
+        assertEquals(settingsBeforeInstall, sha256(settings));
         assertEquals("omluke " + productVersion,
                 run(List.of(installedLauncher.toString(), "--version"), helpProject, true,
                         Map.of("HOME", userHome.toString())).output().strip());
@@ -171,10 +183,16 @@ class PackagedApplicationTest {
         assertEquals(projectFileBeforeUninstall, sha256(workflowProject.resolve("hello.txt")));
         assertEquals(runStateBeforeUninstall, sha256(runState));
         assertEquals(codexStateBeforeUninstall, sha256(codexState));
+        assertEquals(settingsBeforeInstall, sha256(settings));
 
         Result installedAgain = run(List.of("/bin/sh", installer.toString(), "--prefix", prefix.toString()),
                 releaseRoot, false, Map.of("HOME", userHome.toString()));
         assertEquals(0, installedAgain.exitCode(), installedAgain.output());
+        Result preservedSettings = run(List.of(installedLauncher.toString(), "status"), helpProject, true,
+                Map.of("HOME", userHome.toString()));
+        assertEquals(0, preservedSettings.exitCode(), preservedSettings.output());
+        assertTrue(preservedSettings.output().contains("package-model"), preservedSettings.output());
+        assertEquals(settingsBeforeInstall, sha256(settings));
         Result preservedRun = run(List.of(installedLauncher.toString(), "inspect", "package-test"),
                 workflowProject, true, Map.of("HOME", userHome.toString()));
         assertEquals(0, preservedRun.exitCode(), preservedRun.output());

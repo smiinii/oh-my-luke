@@ -75,14 +75,14 @@ codex exec --json --ephemeral
 기본값은 `inherit`다.
 
 ```text
-실행별 명시 모델/추론 강도
-→ 없으면 사용자 Codex 설정
+모델: CLI 옵션 → 작업표 → 프로젝트 고정 또는 사용자 OML 기본값 → Codex 설정
+추론 강도: CLI 옵션 → 작업표 → Codex 설정
 ```
 
 - 명시적 모델은 `--model <사용자 입력>`으로 전달한다.
 - 명시적 추론 강도는 `--config model_reasoning_effort="..."`로 전달한다.
 - OML은 빠르게 바뀌는 모델 목록을 자체 허용 목록으로 복제하지 않는다. 모델 이름의 문자열·제어문자 경계를 검사하고, 실제 사용 가능 여부는 사용자의 CLI와 계정이 판정한다.
-- Java 런타임 설정과 `omluke run <task.json> --model <모델> --reasoning <강도>`에서 선택한다. CLI 선택 → 작업표 선택 → Codex 설정 순이며, 실행 시작 시 작업표에 저장한 선택으로 재개한다.
+- Java 런타임 설정과 `omluke run <task.json> --model <모델> --reasoning <강도>`에서 선택한다. 개발 빌드의 [OML 설정 저장·상속](execution-settings.md)은 새 작업표의 빈 모델 필드에 적용하고, 재개는 저장한 선택을 사용한다. 프로젝트 고정이 있으면 사용자 OML 기본값을 병합하지 않는다.
 
 ## 실행 결과와 사용량
 

@@ -36,6 +36,7 @@ public final class OmlukeCli {
     private final WorkflowRunService workflows;
     private final StartRunService starts;
     private final StartPrompt startPrompt;
+    private final java.util.function.Supplier<io.ohmyluke.profile.ExecutionProfile> profile;
 
     public OmlukeCli(
             ManagedRunService runs,
@@ -60,6 +61,14 @@ public final class OmlukeCli {
     public OmlukeCli(ManagedRunService runs, GraphResolver graphs, ProjectPermissionManager permissions,
                      PrintStream out, PrintStream error, PresetRunService presets,
                      WorkflowRunService workflows, StartRunService starts, StartPrompt startPrompt) {
+        this(runs, graphs, permissions, out, error, presets, workflows, starts, startPrompt,
+                io.ohmyluke.profile.ExecutionProfile::defaults);
+    }
+
+    public OmlukeCli(ManagedRunService runs, GraphResolver graphs, ProjectPermissionManager permissions,
+                     PrintStream out, PrintStream error, PresetRunService presets,
+                     WorkflowRunService workflows, StartRunService starts, StartPrompt startPrompt,
+                     java.util.function.Supplier<io.ohmyluke.profile.ExecutionProfile> profile) {
         this.runs = Objects.requireNonNull(runs, "runs");
         this.graphs = Objects.requireNonNull(graphs, "graphs");
         this.permissions = Objects.requireNonNull(permissions, "permissions");
@@ -69,6 +78,7 @@ public final class OmlukeCli {
         this.workflows = workflows;
         this.starts = starts;
         this.startPrompt = Objects.requireNonNull(startPrompt, "startPrompt");
+        this.profile = Objects.requireNonNull(profile, "profile");
         if (starts != null) {
             Objects.requireNonNull(presets, "presets");
             Objects.requireNonNull(workflows, "workflows");
@@ -118,7 +128,7 @@ public final class OmlukeCli {
             }
             return usageError();
         } catch (RuntimeException failure) {
-            error.println("오류: " + failure.getMessage());
+            error.println("오류: " + ProfileCli.printable(failure.getMessage() == null ? "작업을 실행할 수 없습니다." : failure.getMessage()));
             return 1;
         }
     }
@@ -147,7 +157,8 @@ public final class OmlukeCli {
             error.println("비대화형 실행에서는 --mode auto|direct|loop|workflow를 지정하세요. 새 실행을 시작하지 않았습니다.");
             return 2;
         }
-        StartSpec spec = starts.readSpec(Path.of(args[1])).withRuntimeSelection(model, reasoning);
+        StartSpec spec = io.ohmyluke.profile.ProfileDefaults.apply(starts.readSpec(Path.of(args[1])), profile.get())
+                .withRuntimeSelection(model, reasoning);
         if (choice == null) {
             java.util.Optional<StartChoice> answer;
             try { answer = startPrompt.choose(spec, out); }
@@ -187,7 +198,8 @@ public final class OmlukeCli {
                 default -> { return usageError(); }
             }
         }
-        TaskSpec task = presets.readTask(Path.of(args[1])).withRuntimeSelection(model, reasoning);
+        TaskSpec task = io.ohmyluke.profile.ProfileDefaults.apply(presets.readTask(Path.of(args[1])), profile.get())
+                .withRuntimeSelection(model, reasoning);
         presets.start(runId, task);
         out.println("runId=" + runId); // visible before a potentially long runtime call
         out.println("mode=" + task.mode());
@@ -220,7 +232,8 @@ public final class OmlukeCli {
                 default -> { return usageError(); }
             }
         }
-        WorkflowSpec spec = workflows.readSpec(Path.of(args[1])).withRuntimeSelection(model, reasoning);
+        WorkflowSpec spec = io.ohmyluke.profile.ProfileDefaults.apply(workflows.readSpec(Path.of(args[1])), profile.get())
+                .withRuntimeSelection(model, reasoning);
         workflows.start(runId, spec);
         out.println("runId=" + runId);
         out.println("mode=WORKFLOW");
@@ -382,5 +395,10 @@ public final class OmlukeCli {
         target.println("       omluke <approve|deny> <run-id> <request-id>");
         target.println("       omluke permissions <show|reset>");
         target.println("       omluke permissions autonomous <on|off>");
+        target.println("       omluke setup | status");
+        target.println("       omluke switch --scope global|project --model <모델ID>");
+        target.println("       omluke switch --scope global|project --inherit-model");
+        target.println("       omluke switch --scope project --inherit");
+        target.println("       omluke --project <작업폴더> <명령>  (작업표와 대상 파일의 기준 폴더)");
     }
 }

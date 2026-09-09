@@ -85,7 +85,7 @@ codex login status
 "$OML_BIN" start task.json --mode workflow --run-id workflow-demo
 ```
 
-모델과 추론 강도는 사용자가 명시할 수 있다. 우선순위는 CLI 옵션 → 작업표 → 사용자 Codex 설정이며, OML이 실패 시 다른 모델로 자동 변경하지 않는다.
+모델과 추론 강도는 사용자가 명시할 수 있다. 모델 우선순위는 CLI 옵션 → 작업표 → [선택된 OML 설정](execution-settings.md) → 사용자 Codex 설정이다. 추론 강도는 CLI 옵션 → 작업표 → Codex 설정이며, OML이 실패 시 다른 모델로 자동 변경하지 않는다. 개발 빌드는 가장 가까운 프로젝트 경계를 탐지하고 `projectRoot=`를 출력한다. 경로 해석과 명시 지정은 [실행 설정](execution-settings.md#기록-폴더-결정)을 확인한다.
 
 ```bash
 "$OML_BIN" start task.json --mode auto --model YOUR_MODEL --reasoning low
