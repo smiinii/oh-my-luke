@@ -17,6 +17,7 @@ import time
 from evaluator import java_home
 from execution import execute
 from fixtures import ROOT, REPO, copy_overlay, snapshot
+from packet import attach_rules, NAME, rule_hash
 
 
 def hashes(root):
@@ -104,6 +105,7 @@ def prepare(bundle, task, destination):
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=False)
     copy_overlay(Path(bundle) / task / "worker", destination)
+    attach_rules(destination)
     return hashes(destination)
 
 
@@ -112,6 +114,7 @@ def evaluate(bundle, task, candidate):
     material = Path(bundle) / task
     spec = json.loads((material / "spec.json").read_text())
     original, current = hashes(material / "worker"), snapshot(candidate)
+    original[NAME] = rule_hash()  # Delivery policy is versioned separately; sealed answers remain unchanged.
     for name, digest in original.items():
         if name not in current or (not name.startswith("src/main/") and current[name] != digest):
             return "forbidden-change"

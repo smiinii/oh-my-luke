@@ -18,6 +18,8 @@ from container_worker import execute_container, image_identity
 from container_worker import docker
 from recovery import DEFAULT_ROOT, recover_abandoned
 from network import POLICY as NETWORK_POLICY
+from packet import prompt, rule_hash
+from review import record_review, load_reviews
 
 
 def write_json(path, value):
@@ -62,6 +64,7 @@ def dry_run(output, task="pilot", mode="success", container_image=None, public_w
         item["startCommit"] = baseline["startCommit"]
         baselines[item["runId"]] = baseline
     protocol = {"version": 1, "tasks": [task], "repetitions": 1, "timeoutSeconds": 1200,
+                "experimentRulesHash": rule_hash(), "reviewPolicy": "coordinator-evidence-v1",
                 "executor": "synthetic-python-worker", "network": isolation["network"], "isolation": isolation, "model": "NONE",
                 "startCommits": {task: runs[0]["startCommit"]},
                 "toolHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -76,6 +79,10 @@ def dry_run(output, task="pilot", mode="success", container_image=None, public_w
         workspace = worker / "workspace"
         baseline = baselines[item["runId"]]
         write_json(run_root / "baseline.json", baseline)
+        packet = prompt(workspace)
+        (run_root / "prompt.txt").write_text(packet)
+        write_json(run_root / "packet.json", {"experimentRulesHash": rule_hash(),
+                   "promptHash": hashlib.sha256(packet.encode()).hexdigest()})
         patches = {str(p.relative_to(ROOT / "references" / task)): p.read_text()
                    for p in (ROOT / "references" / task).rglob("*.java")} if mode == "success" else {}
         events = [{"type": "thread.started", "thread_id": item["runId"]}, {"type": "turn.started"},
@@ -137,6 +144,14 @@ def main():
     dry.add_argument("--public-web", action="store_true", help="Public HTTP(S) via per-run proxy; not remote answer-sharing prevention")
     report = commands.add_parser("report")
     report.add_argument("directory", type=Path)
+    report.add_argument("--format", choices=("markdown", "csv"), default="markdown")
+    review = commands.add_parser("review", help="Coordinator evidence review; does not detect all network sharing")
+    review.add_argument("directory", type=Path)
+    review.add_argument("run_id")
+    review.add_argument("--decision", choices=("CLEAR", "CONTAMINATED"), required=True)
+    review.add_argument("--reason", required=True)
+    review.add_argument("--reviewer", required=True)
+    review.add_argument("--evidence", action="append", default=[], choices=("review-evidence.txt",))
     args = parser.parse_args()
     if args.command == "preflight":
         print(json.dumps(preflight(), indent=2))
@@ -144,11 +159,15 @@ def main():
         print(json.dumps(recover_abandoned(docker, args.registry), indent=2))
     elif args.command == "dry-run":
         print(json.dumps(dry_run(args.output, args.task, args.mode, args.container_image, args.public_web), indent=2))
+    elif args.command == "review":
+        record_review(args.directory, args.run_id, args.decision, args.reason, args.reviewer, args.evidence)
+        print("검토 이력을 저장했습니다. 원시 결과는 변경하지 않았습니다. report 명령으로 다시 집계하세요.")
     else:
         directory = args.directory
+        records = json.loads((directory / "results.json").read_text())
         content = build_report(json.loads((directory / "manifest.json").read_text()),
-                               json.loads((directory / "results.json").read_text()))
-        print(content["markdown"], end="")
+                               records, load_reviews(directory, records))
+        print(content[args.format], end="")
 
 
 if __name__ == "__main__":

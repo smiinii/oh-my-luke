@@ -22,6 +22,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual({"SUCCEEDED"}, {r["status"] for r in records})
         self.assertEqual({0}, {r["actualAiCalls"] for r in records})
         self.assertEqual(1, len({r["startCommit"] for r in records}))
+        self.assertEqual(1, len({(output / r["runId"] / "prompt.txt").read_text() for r in records}))
+        self.assertEqual(1, len({json.loads((output / r["runId"] / "packet.json").read_text())["promptHash"] for r in records}))
         rebuilt = build_report(json.loads((output / "manifest.json").read_text()),
                                json.loads((output / "results.json").read_text()))
         self.assertEqual(rebuilt["markdown"], (output / "report.md").read_text())

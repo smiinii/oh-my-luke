@@ -16,6 +16,7 @@ def live_readiness():
             "PROXY_COMPATIBILITY: real CLI/provider/MCP HTTP(S) proxy behavior must pass the pilot",
             "RUNTIME_CONFIG_AUTH: real Codex/OMX/OML config, hooks and authentication isolation unverified",
             "SESSION_INVENTORY: actual OMX child inventory and usage schema unverified",
+            "LIVE_POLICY_DELIVERY: real CLI must receive the pinned shared prompt and produce reviewable evidence",
             "PRODUCT_SUPPORT: OML new/multiple files and fixed build validation require issue #37",
         ],
     }

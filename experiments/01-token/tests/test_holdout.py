@@ -25,7 +25,7 @@ class HoldoutTests(unittest.TestCase):
         manifest = seal(self.source, self.bundle)
         self.assertEqual(manifest, verify(self.bundle, manifest["bundleHash"]))
         exported = prepare(self.bundle, "a", self.root / "worker")
-        self.assertEqual({"TASK.md"}, set(exported))
+        self.assertEqual({"TASK.md", "EXPERIMENT-RULES.md"}, set(exported))
         with self.assertRaises(FileExistsError):
             seal(self.source, self.bundle)
 

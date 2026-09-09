@@ -78,7 +78,7 @@ def prepare(task, destination):
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / name, target)
-    (destination / "TASK.md").write_text(spec["goal"] + "\n\nTASK-CONVENTIONS.md의 공통 규칙을 따르세요.\n")
+    (destination / "TASK.md").write_text(spec["goal"] + "\n\nTASK-CONVENTIONS.md와 EXPERIMENT-RULES.md의 공통 규칙을 따르세요.\n")
     env = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT") if key in os.environ}
     env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
            "GIT_AUTHOR_NAME": "OML benchmark fixture", "GIT_COMMITTER_NAME": "OML benchmark fixture",
