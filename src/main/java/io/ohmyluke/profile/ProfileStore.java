@@ -77,6 +77,19 @@ final class ProfileStore {
         });
     }
 
+    void changeIfUnchanged(ExecutionProfile expected, ExecutionProfile replacement) {
+        locked(() -> {
+            if (!Objects.equals(load().orElse(null), expected)) {
+                throw new IllegalStateException("다른 곳에서 설정이 변경됐습니다. 선택 화면을 다시 열어 확인하세요.");
+            }
+            if (replacement == null) {
+                try { Files.deleteIfExists(file); }
+                catch (IOException error) { throw new IllegalStateException("프로젝트 설정을 해제하지 못했습니다."); }
+            } else { write(replacement); }
+            return null;
+        });
+    }
+
     void save(ExecutionProfile profile) {
         Objects.requireNonNull(profile);
         locked(() -> { load(); write(profile); return null; });

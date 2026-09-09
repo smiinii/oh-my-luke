@@ -37,6 +37,7 @@ OML은 AI 모델 자체가 아니다. 사용자의 목표를 작은 단계로 �
 14. [Homebrew 한 줄 설치](14-homebrew-installation.md)
 15. [실제 AI 없이 비교 실험 준비하기](15-experiment-preparation.md)
 16. [실행 설정을 보존하고 프로젝트를 구별하기](16-execution-settings.md)
+17. [실행기와 모델을 선택하는 터미널 화면](17-runtime-picker.md)
 
 ## 지금 가능한 것
 
