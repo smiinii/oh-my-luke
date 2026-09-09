@@ -4,6 +4,10 @@
 
 Codex 직접 실행과 OML 실행을 같은 조건에서 비교해 OML이 검증 성공률을 유지하거나 높이면서 기록 토큰과 AI 호출을 줄이는지 확인한다.
 
+현재 실험 1은 OMX도 포함한 3자 비교로 준비한다. [준비 도구·실행 안내](../experiments/01-token/plan.md), [과제](../experiments/01-token/tasks.md), [계측·격리 계약](../experiments/01-token/measurement.md), [제품 적합성](../experiments/01-token/feasibility.md)을 최신 구체 계획으로 삼는다. 아래의 양쪽 비교 원칙은 세 방식의 모든 쌍에 적용한다.
+
+순서는 [#32 준비](https://github.com/smiinii/oh-my-luke/issues/32) → [#35 예비 실험](https://github.com/smiinii/oh-my-luke/issues/35) → [#36 본 실험](https://github.com/smiinii/oh-my-luke/issues/36)이다. [제품 선행 조건 #37](https://github.com/smiinii/oh-my-luke/issues/37)이 있으며 현재 결과는 실제 AI 0회의 합성 드라이런뿐이다.
+
 ## 실험 모드
 
 Open-world isolated-arms benchmark를 사용한다.

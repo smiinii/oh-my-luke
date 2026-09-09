@@ -35,6 +35,7 @@ OML은 AI 모델 자체가 아니다. 사용자의 목표를 작은 단계로 �
 12. [v0.1.0-rc.1 시험 배포 준비](12-trial-release-preparation.md)
 13. [검증된 GitHub prerelease 게시](13-github-prerelease.md)
 14. [Homebrew 한 줄 설치](14-homebrew-installation.md)
+15. [실제 AI 없이 비교 실험 준비하기](15-experiment-preparation.md)
 
 ## 지금 가능한 것
 

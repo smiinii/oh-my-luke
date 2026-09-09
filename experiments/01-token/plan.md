@@ -1,0 +1,84 @@
+# 실험 1 준비와 실행 안내
+
+목표는 Codex CLI·OMX·OML의 같은 개발 작업 성공률과 기록 토큰을 비교하는 것이다. 현재 PR은 **실제 AI 호출 없는 준비 도구**이며 실제 모델 성능 결과가 아니다.
+
+## 진행 순서
+
+1. [#32 준비](https://github.com/smiinii/oh-my-luke/issues/32): 과제, 평가기, 로컬 격리, 계측 샘플, 가짜 실행.
+2. [#37 제품 선행 작업](https://github.com/smiinii/oh-my-luke/issues/37): 신규 파일·다중 파일·고정 빌드 검증 지원.
+3. [#35 예비 실험](https://github.com/smiinii/oh-my-luke/issues/35): 별도 연습 과제 × 세 도구, 실제 로그·인증·계측 확인.
+4. [#36 본 실험](https://github.com/smiinii/oh-my-luke/issues/36): 예비 결과를 보고 규모 확정 후 비교·보고.
+
+## 읽는 순서
+
+- [격리 재감사: 미통과 조건과 보완](audit.md)
+- [현재 적합성 및 남은 조건](feasibility.md)
+- [과제·완료 조건](tasks.md)
+- [격리·토큰·집계 계약](measurement.md)
+
+## 개발 환경
+
+Java 21, Git, Python 3.9 이상과 macOS Seatbelt 또는 Linux bubblewrap이 필요하다. Python은 저장소의 실험 자동화 도구이며 OML 배포 패키지에 포함하지 않는다. 제품 본체와 실험 과제는 Java다. Python 외부 패키지는 없다.
+
+macOS에서는 설치된 JDK 21을 자동 탐색한다. 다른 환경에서는 `JAVA_HOME` 또는 실험 전용 `OML_BENCH_JAVA_HOME`으로 JDK 21을 지정한다. IntelliJ와 다른 프로젝트 설정은 변경하지 않는다.
+
+Linux는 `bwrap`과 unprivileged user namespace가 필요하다. CI는 ubuntu-24.04와 macos-15에서 검사한다. 샌드박스가 실행되지 않으면 일반 프로세스로 우회하지 않는다.
+
+## 실제 AI 없이 검증하기
+
+저장소 루트에서 실행한다.
+
+```bash
+PYTHONPATH=experiments/01-token/runner python3 -m unittest discover -s experiments/01-token/tests -v
+python3 experiments/01-token/runner/bench.py preflight
+```
+
+드라이런은 존재하지 않는 출력 디렉터리를 받는다. 같은 경로를 다시 사용하면 이전 기록을 덮어쓰지 않고 실패한다.
+
+아래 기본 드라이런은 기존 로컬 회귀 검사다. 인터넷은 끄지만 호스트 파일 전체 격리의 증거로 사용하지 않는다. 새 컨테이너 경로와 구분해 기록한다.
+
+```bash
+python3 experiments/01-token/runner/bench.py dry-run experiments/01-token/local-runs/demo-001 --task a
+python3 experiments/01-token/runner/bench.py report experiments/01-token/local-runs/demo-001
+```
+
+`--task a|b|c|pilot`, `--mode success|fail|timeout|environment_error`를 지원한다. 실제 AI 실행 명령은 제공하지 않으므로 명령을 잘못 선택해 구독 사용량을 소비하지 않는다.
+
+## 일회용 컨테이너 준비 검사
+
+Docker Engine 또는 Docker Desktop이 실행되어 있어야 한다. 이미지는 Java21·Python·Git과 네트워크 중계 코드만 포함하며 인증·평가기·정답을 넣지 않는다. 작업 컨테이너 자체의 네트워크는 끄고, `--public-web`일 때만 별도 게이트웨이로 공개 HTTP(S)를 허용한다. 모든 비교군에 같은 이미지 ID를 사용한다. 현재 고정 베이스는 Linux x64이며 ARM 호스트의 실행은 에뮬레이션 검사이지 네이티브 성능 자료가 아니다.
+
+```bash
+docker build --platform linux/amd64 -t oml-preparation:local experiments/01-token/container
+OML_TEST_CONTAINER_IMAGE=oml-preparation:local PYTHONPATH=experiments/01-token/runner python3 -m unittest discover -s experiments/01-token/tests -p test_container_worker.py -v
+python3 experiments/01-token/runner/bench.py dry-run experiments/01-token/local-runs/container-001 --task a --container-image oml-preparation:local --public-web
+```
+
+Docker/프록시 실패 시 직접 네트워크나 로컬 경로로 전환하지 않는다. 미실행/skip은 통과가 아니다. CI의 별도 Linux 작업에서 실제 웹·패키지·Gradle 실행과 호스트/사설망 차단을 필수 검사한다. 인증·CLI·MCP 호환성과 원격 공개 서비스를 통한 답안 공유 방지는 이 검사로 증명하지 않는다.
+
+## 비공개 과제 동결
+
+`runner/holdout.py scaffold SOURCE`, `seal SOURCE DESTINATION`, `check BUNDLE --expected-hash SHA256` 순서로 사용한다. 경로는 모든 Git 저장소 밖이어야 하며 기존 동결본을 덮어쓰지 않는다. SHA256은 동결 시 출력한 값을 별도로 보관한다. 작업자용 `worker/`, 조정자 전용 `reference/`·`judge/`·`spec.json`을 분리한다. 비공개 원본이나 정답을 PR·CI 아티팩트로 업로드하지 않는다. 실제 실행기에 연결하고 동일 입력·해시를 run manifest에 고정하는 작업은 실측 진입 조건으로 유지한다.
+
+## 출력 구조
+
+```text
+demo-001/
+├── manifest.json            시작 커밋·과제·도구 해시·실행 순서
+├── results.json             모든 실행의 판정·토큰·시간
+├── summary.csv / report.md  동일 원시 값에서 재생성
+└── a-1-codex/               omx·oml도 별도 공간
+    ├── baseline.json        원본 파일 해시
+    ├── stdout.jsonl / stderr.txt
+    ├── usage-manifest.json / result.json
+    ├── execution.json      실제 격리 정책·시작 커밋·동결/제거 확인
+    └── worker/workspace/    독립 .git과 시작 코드
+```
+
+현재 codex/omx/oml 이름은 **가짜 실행의 비교 칸**이다. 세 실제 도구를 호출했다는 뜻이 아니다. 모든 테스트 수치에 `synthetic: true`, `actualAiCalls: 0`을 기록한다.
+
+## 실제 실험 진입 기준
+
+`preflight`는 현재 `assessment: BLOCKED`, `liveReady: false`와 구체적인 미해결 조건을 반환한다. #37 및 실제 실행기의 컨테이너 연결·인증·전체 세션 계측·프록시 호환성·비공개 프로토콜 고정이 필요하다. 공개 인터넷을 유지하므로 원격 서비스의 답안 공유까지 완전히 차단하지 않는 한계는 수용한 조건으로 별도 표시한다. 가짜 로그 계측을 실제 OMX에서도 정확하다고 주장하지 않는다.
+
+모델·추론·각 도구 모드·공통 도구 설정은 예비 실행 전에 고정한다. 본 실험 초안은 3과제 × 3도구 × 3회 = 27회다. 예비 실험의 실제 사용량과 시간을 확인한 후 실행 규모를 확정한다.

@@ -14,3 +14,7 @@ out/
 
 # macOS
 .DS_Store
+
+# Experiment runner caches and local raw logs (publish reviewed evidence explicitly)
+experiments/**/__pycache__/
+experiments/01-token/local-runs/

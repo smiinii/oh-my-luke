@@ -37,11 +37,16 @@ jobs:
           set -euo pipefail
           archive="$(find build/package -maxdepth 1 -type f -name 'omluke-*.tar.gz' -print -quit)"
           test -n "$archive"
-          first_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
-          ./gradlew packageArchive --rerun-tasks
-          second_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
-          test "$first_sha" = "$second_sha"
-          echo "Reproducible package SHA-256: $second_sha"
+          python3 scripts/release/verify-reproducible.py "$archive" build/reproducibility
+      - name: Preserve reproducibility evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reproducibility-${{ runner.os }}-${{ runner.arch }}
+          path: build/reproducibility/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
       - name: Upload verified development package
         uses: actions/upload-artifact@v7
         with:
