@@ -16,6 +16,40 @@ permissions:
   contents: read
 
 jobs:
+  disposable-worker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21.0.12+8.0.LTS'
+      - name: Build credential-free preparation image
+        run: docker build -t oml-preparation:ci experiments/01-token/container
+      - name: Test disposable worker boundary (required, no skip)
+        env:
+          OML_TEST_CONTAINER_IMAGE: oml-preparation:ci
+          PYTHONPATH: experiments/01-token/runner
+        run: python3 -m unittest discover -s experiments/01-token/tests -p test_container_worker.py -v
+      - name: Install isolated evaluator
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run three synthetic arms in disposable containers
+        run: |
+          python3 experiments/01-token/runner/bench.py dry-run "$RUNNER_TEMP/oml-container-preparation" --task a --container-image oml-preparation:ci
+          python3 -c 'import json,os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"oml-container-preparation/results.json"; r=json.loads(p.read_text()); assert len(r)==3 and all(x["status"]=="SUCCEEDED" and x["actualAiCalls"]==0 for x in r)'
+      - name: Retain attempt evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: disposable-worker-evidence
+          path: ${{ runner.temp }}/oml-container-preparation/
+          if-no-files-found: warn
+          retention-days: 7
   offline-benchmark:
     timeout-minutes: 15
     strategy:

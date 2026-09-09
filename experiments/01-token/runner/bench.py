@@ -14,6 +14,7 @@ from fixtures import ROOT, prepare, task_spec
 from report import build_report, protocol_hash, schedule
 from usage import summarize
 from readiness import live_readiness
+from container_worker import execute_container, image_identity
 
 
 def write_json(path, value):
@@ -38,8 +39,11 @@ def preflight():
             "platform": sys.platform, "javaHome": str(java_home())}
 
 
-def dry_run(output, task="pilot", mode="success"):
+def dry_run(output, task="pilot", mode="success", container_image=None):
     task_spec(task)
+    isolation = image_identity(container_image) if container_image else {"policy": "legacy-local-regression", "network": "none"}
+    if container_image:
+        container_image = isolation["imageId"]  # Freeze once, never re-resolve a mutable tag per arm.
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     runs = schedule((task,), 1)
@@ -51,7 +55,7 @@ def dry_run(output, task="pilot", mode="success"):
         item["startCommit"] = baseline["startCommit"]
         baselines[item["runId"]] = baseline
     protocol = {"version": 1, "tasks": [task], "repetitions": 1, "timeoutSeconds": 1200,
-                "executor": "synthetic-python-worker", "network": "same-open", "model": "NONE",
+                "executor": "synthetic-python-worker", "network": "none", "isolation": isolation, "model": "NONE",
                 "startCommits": {task: runs[0]["startCommit"]},
                 "toolHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                                for folder in ("runner", "evaluator", "tasks", "references")
@@ -76,13 +80,18 @@ def dry_run(output, task="pilot", mode="success"):
         code += "print(" + repr("\n".join(json.dumps(e) for e in events)) + ",flush=True)\n"
         if mode == "timeout":
             code += "time.sleep(60)\n"
-        command = [sys.executable, "-c", code] if mode != "environment_error" else ["/nonexistent/oml-fixture"]
+        command = ["python3" if container_image else sys.executable, "-c", code] if mode != "environment_error" else ["/nonexistent/oml-fixture"]
         try:
-            outcome = execute(command, worker, [output, ROOT], timeout=0.1 if mode == "timeout" else 10)
+            timeout = 0.1 if mode == "timeout" else 10
+            outcome = (execute_container(command, worker, container_image, timeout=timeout, task=task)
+                       if container_image else execute(command, worker, [output, ROOT], timeout=timeout, network=False))
+            if container_image and outcome.get("isolation", {}).get("workerStartCommit") != baseline["startCommit"]:
+                outcome.update(status="ENVIRONMENT_ERROR", stderr="Container start commit does not match frozen fixture")
         except OSError as error:
             outcome = {"status": "ENVIRONMENT_ERROR", "exitCode": None, "stdout": "", "stderr": str(error), "elapsedMillis": 0}
         (run_root / "stdout.jsonl").write_text(outcome["stdout"])
         (run_root / "stderr.txt").write_text(outcome["stderr"])
+        write_json(run_root / "execution.json", outcome)
         usage_manifest = {"synthetic": True, "inventoryComplete": mode == "success",
                           "sessions": [{"id": item["runId"], "parentId": None, "scope": "self",
                           "schema": "codex-exec-jsonl-v1", "log": "stdout.jsonl",
@@ -98,6 +107,8 @@ def dry_run(output, task="pilot", mode="success"):
                   "cliExecutions": 1, "actualAiCalls": 0, "reason": judge["reason"] if judge else outcome["status"]}
         write_json(run_root / "result.json", record)
         records.append(record)
+        if outcome.get("isolation", {}).get("removed") is False:
+            break  # Keep the failed attempt, but never start another worker after failed cleanup.
     write_json(output / "results.json", records)
     report = build_report(plan, records)
     (output / "report.md").write_text(report["markdown"])
@@ -113,13 +124,14 @@ def main():
     dry.add_argument("output", type=Path)
     dry.add_argument("--task", choices=("a", "b", "c", "pilot"), default="pilot")
     dry.add_argument("--mode", choices=("success", "fail", "timeout", "environment_error"), default="success")
+    dry.add_argument("--container-image", help="Explicit prebuilt offline image; no fallback when Docker fails")
     report = commands.add_parser("report")
     report.add_argument("directory", type=Path)
     args = parser.parse_args()
     if args.command == "preflight":
         print(json.dumps(preflight(), indent=2))
     elif args.command == "dry-run":
-        print(json.dumps(dry_run(args.output, args.task, args.mode), indent=2))
+        print(json.dumps(dry_run(args.output, args.task, args.mode, args.container_image), indent=2))
     else:
         directory = args.directory
         content = build_report(json.loads((directory / "manifest.json").read_text()),

@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from bench import dry_run
 from report import build_report
+from fixtures import prepare
 
 
 class RunnerTests(unittest.TestCase):
@@ -34,3 +36,17 @@ class RunnerTests(unittest.TestCase):
                 records = dry_run(self.root / mode, mode=mode)
                 self.assertEqual({expected}, {r["status"] for r in records})
                 self.assertTrue(all(r["usage"]["totalTokens"] is None for r in records))
+
+    def test_cleanup_failure_retains_attempt_and_stops_other_arms(self):
+        baseline = prepare("pilot", self.root / "expected")
+        outcome = {"status": "ENVIRONMENT_ERROR", "exitCode": 0, "elapsedMillis": 1,
+                   "stdout": "", "stderr": "Cleanup incomplete",
+                   "isolation": {"removed": False, "workerStartCommit": baseline["startCommit"]}}
+        with patch("bench.image_identity", return_value={"imageId": "test-image"}), \
+             patch("bench.execute_container", return_value=outcome) as executor:
+            output = self.root / "cleanup-failure"
+            records = dry_run(output, container_image="test-image")
+        self.assertEqual(1, executor.call_count)
+        self.assertEqual("ENVIRONMENT_ERROR", records[0]["status"])
+        self.assertFalse(json.loads((output / "pilot-1-codex/execution.json").read_text())["isolation"]["removed"])
+        self.assertEqual(2, (output / "summary.csv").read_text().count("NOT_RUN"))

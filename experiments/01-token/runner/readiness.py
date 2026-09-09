@@ -5,6 +5,7 @@ def live_readiness():
     return {
         "liveReady": False,
         "assessment": "BLOCKED",
+        "preparationOnly": "Optional offline-container-v1 exists; it does not satisfy live network/auth gates",
         "blockers": [
             "OPEN_WORKER_HOST_RELAY: open network can reach a host HTTP/IPC relay",
             "HOST_FILESYSTEM: denylist is not a clean host/credential isolation boundary",

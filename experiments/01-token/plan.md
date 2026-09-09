@@ -35,12 +35,26 @@ python3 experiments/01-token/runner/bench.py preflight
 
 드라이런은 존재하지 않는 출력 디렉터리를 받는다. 같은 경로를 다시 사용하면 이전 기록을 덮어쓰지 않고 실패한다.
 
+아래 기본 드라이런은 기존 로컬 회귀 검사다. 인터넷은 끄지만 호스트 파일 전체 격리의 증거로 사용하지 않는다. 새 컨테이너 경로와 구분해 기록한다.
+
 ```bash
 python3 experiments/01-token/runner/bench.py dry-run experiments/01-token/local-runs/demo-001 --task a
 python3 experiments/01-token/runner/bench.py report experiments/01-token/local-runs/demo-001
 ```
 
 `--task a|b|c|pilot`, `--mode success|fail|timeout|environment_error`를 지원한다. 실제 AI 실행 명령은 제공하지 않으므로 명령을 잘못 선택해 구독 사용량을 소비하지 않는다.
+
+## 일회용 컨테이너 준비 검사
+
+Docker Engine 또는 Docker Desktop이 실행되어 있어야 한다. 이미지는 Java21·Python·Git만 포함하며 인증·평가기·정답을 넣지 않는다. 빌드에는 인터넷이 필요하지만 작업 컨테이너의 인터넷은 차단한다. 모든 비교군에 같은 이미지 ID를 사용한다. 현재 고정 베이스는 Linux x64이며 ARM 호스트의 실행은 에뮬레이션 검사이지 네이티브 성능 자료가 아니다.
+
+```bash
+docker build --platform linux/amd64 -t oml-preparation:local experiments/01-token/container
+OML_TEST_CONTAINER_IMAGE=oml-preparation:local PYTHONPATH=experiments/01-token/runner python3 -m unittest discover -s experiments/01-token/tests -p test_container_worker.py -v
+python3 experiments/01-token/runner/bench.py dry-run experiments/01-token/local-runs/container-001 --task a --container-image oml-preparation:local
+```
+
+Docker 실패 시 로컬 경로로 자동 전환하지 않는다. 컨테이너 검사 미실행/skip은 통과가 아니다. CI의 별도 Linux 작업에서 해당 검사를 필수 실행한다. 인터넷·패키지 다운로드·MCP를 허용한 실제 실험은 이 오프라인 검사의 범위 밖이다.
 
 ## 출력 구조
 
@@ -53,6 +67,7 @@ demo-001/
     ├── baseline.json        원본 파일 해시
     ├── stdout.jsonl / stderr.txt
     ├── usage-manifest.json / result.json
+    ├── execution.json      실제 격리 정책·시작 커밋·동결/제거 확인
     └── worker/workspace/    독립 .git과 시작 코드
 ```
 
