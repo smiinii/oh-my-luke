@@ -69,6 +69,10 @@ public final class OmlukeApplication {
                         ? null : io.ohmyluke.profile.ProjectLocator.locate(cwd, home, explicitProject, settingsHome);
         var profiles = informational ? null : new io.ohmyluke.profile.ExecutionProfiles(settingsHome, project);
         if (profileCommand) { return new ProfileCli(profiles, project, System.out).execute(args); }
+        if (command.equals("usage")) {
+            return new UsageCli(new io.ohmyluke.usage.UsageReport(project,
+                    new io.ohmyluke.ai.codex.CodexUsageReader(project)),System.out).execute(args);
+        }
         if (!informational) {
             System.out.println("projectRoot=" + ProfileCli.printable(project.toString()));
             if (java.util.Set.of("start", "run", "workflow").contains(command) && args.length >= 2) {

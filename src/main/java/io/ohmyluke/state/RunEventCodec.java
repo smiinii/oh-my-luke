@@ -7,7 +7,9 @@ import java.util.Objects;
 
 /** Encodes one run event as exactly one JSONL line. */
 public final class RunEventCodec {
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = com.fasterxml.jackson.databind.json.JsonMapper.builder()
+            .enable(com.fasterxml.jackson.core.StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+            .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
 
     public String encode(RunEvent event) {
         Objects.requireNonNull(event, "event");

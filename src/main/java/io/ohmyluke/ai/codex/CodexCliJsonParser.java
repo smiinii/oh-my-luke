@@ -7,7 +7,9 @@ import io.ohmyluke.ai.AiTokenUsage;
 
 final class CodexCliJsonParser {
     private static final String USAGE_SOURCE = "codex-exec-jsonl";
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = com.fasterxml.jackson.databind.json.JsonMapper.builder()
+            .enable(com.fasterxml.jackson.core.StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+            .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
 
     CodexParsedOutput parse(String jsonLines) {
         String finalMessage = "";
@@ -16,6 +18,8 @@ final class CodexCliJsonParser {
         boolean failed = false;
         boolean usageComplete = true;
         boolean sawUsage = false;
+        int completedTurns = 0;
+        int threads = 0;
         long inputTokens = 0;
         long cachedInputTokens = 0;
         long outputTokens = 0;
@@ -29,7 +33,10 @@ final class CodexCliJsonParser {
             JsonNode event = parseObject(line);
             String type = requiredText(event, "type");
             switch (type) {
-                case "thread.started" -> threadId = optionalText(event, "thread_id", threadId);
+                case "thread.started" -> {
+                    if (++threads > 1) { usageComplete = false; }
+                    threadId = optionalText(event, "thread_id", threadId);
+                }
                 case "item.completed" -> {
                     JsonNode item = event.get("item");
                     if (item != null
@@ -40,6 +47,9 @@ final class CodexCliJsonParser {
                 }
                 case "turn.completed" -> {
                     completed = true;
+                    // This adapter submits one prompt, with no exec resume. A second terminal event has
+                    // no stable turn ID in this schema: do not guess whether it is replayed or additional usage.
+                    if (++completedTurns > 1) { usageComplete = false; }
                     JsonNode usage = event.get("usage");
                     TokenCounts counts = optionalTokenCounts(usage);
                     if (counts == null) {
@@ -62,6 +72,7 @@ final class CodexCliJsonParser {
                 }
             }
         }
+        if (inputTokens > Long.MAX_VALUE - outputTokens) { usageComplete = false; }
         AiTokenUsage usage = usageComplete && sawUsage
                 ? AiTokenUsage.measured(
                         inputTokens,

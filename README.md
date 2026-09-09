@@ -174,7 +174,7 @@ Windows에서 기본 테스트 명령은 다음과 같습니다. 파일·프로�
 
 기존 [Direct·Loop의 `run` 명령](docs/preset-usage.md)과 `workflow` 명령은 작업표의 모드·선언을 사용하는 명시적 수동 진입점으로 유지합니다. `inspect`·`resume`은 저장 선택과 작업표를 사용하며 다시 묻지 않습니다.
 
-소스 개발 빌드에는 Codex + OML의 [실행 환경 선택 화면과 설정 보존](docs/execution-settings.md)이 있습니다. `setup`·`switch`로 실행기·하네스·모델·범위를 선택하고, `status`로 설정을 확인합니다. `runtimes`는 알려진 CLI 탐지, `models`는 Codex의 모델 목록 조회입니다. **공개 RC에는 아직 없으며**, 다른 하네스는 탐지/준비 중 표시만 지원하고 실제 연결·질문별 사용량 화면은 후속 개발입니다.
+소스 개발 빌드에는 Codex + OML의 [실행 환경 선택 화면과 설정 보존](docs/execution-settings.md)이 있습니다. `setup`·`switch`로 실행기·하네스·모델·범위를 선택하고, `status`로 설정을 확인합니다. `runtimes`는 알려진 CLI 탐지, `models`는 Codex의 모델 목록 조회입니다. `usage`는 [프로젝트별 질문·저장 토큰 조회와 JSON/CSV 출력](docs/usage-records.md)입니다. **공개 RC에는 아직 없으며**, 다른 하네스의 실제 연결과 자식 에이전트까지 포함한 전체 소비량 검증은 후속 범위입니다.
 
 [Workflow 예제와 설계 장단점](docs/workflow-usage.md)에는 AI 없이 승인·재개를 확인하는 예제도 있습니다. 승인 게이트는 도구 권한을 변경하지 않습니다.
 
@@ -209,6 +209,7 @@ macOS·Linux에서 OML 전용 Java 런타임을 포함한 앱 이미지와 `tar.
 - [코드 없이 이해하는 현재 동작과 마일스톤](docs/how-it-works/README.md)
 - [자동·수동 선택으로 작업 시작하기](docs/start-usage.md)
 - [실행 설정·프로젝트별 고정·기록 폴더](docs/execution-settings.md)
+- [질문별 사용량·기록 대조·내보내기](docs/usage-records.md)
 - [개발용 실행·모델 선택·검증·재개](docs/preset-usage.md)
 - [Java를 포함한 개발 패키지와 검증 범위](docs/distribution.md)
 - [제품 범위](docs/product.md)

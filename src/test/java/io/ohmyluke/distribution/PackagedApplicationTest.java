@@ -87,6 +87,12 @@ class PackagedApplicationTest {
         Result version = run(List.of(launcher.toString(), "--version"), helpProject, true);
         assertEquals(0, version.exitCode(), version.output());
         assertEquals("omluke " + productVersion, version.output().strip());
+        Path usageProject=Files.createDirectory(directory.resolve("usage-project"));
+        Result usage = run(List.of(launcher.toString(), "usage", "--format", "json"), usageProject, true);
+        assertEquals(0, usage.exitCode(), usage.output());
+        var usageJson = new com.fasterxml.jackson.databind.ObjectMapper().readTree(usage.output());
+        assertTrue(usageJson.path("questions").isEmpty(), usage.output());
+        assertFalse(Files.exists(usageProject.resolve(".oml")));
 
         Path userHome = Files.createDirectory(directory.resolve("user-home")).toRealPath();
         Path codexState = userHome.resolve(".codex/auth.json");
