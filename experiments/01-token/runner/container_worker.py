@@ -13,9 +13,9 @@ import subprocess
 import tarfile
 import tempfile
 import time
-import uuid
 
 from fixtures import snapshot
+from recovery import DEFAULT_ROOT, LABEL, Lease, cleanup
 
 
 def docker(*args, timeout=30, input=None):
@@ -86,7 +86,7 @@ def candidate_files(blob):
     return files
 
 
-def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000, task="pilot"):
+def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000, task="pilot", recovery_root=DEFAULT_ROOT):
     if not argv or not 0 < timeout <= 1200 or type(output_limit) is not int or not 0 < output_limit <= 4_000_000:
         raise ValueError("Invalid execution limits")
     writable = Path(writable).resolve(strict=True)
@@ -95,16 +95,19 @@ def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000,
         raise ValueError("Unknown fixture task")
     baseline = snapshot(workspace)
     policy = image_identity(image)
-    name = "oml-prep-" + uuid.uuid4().hex
+    lease = Lease(docker, recovery_root)
+    name = lease.name
     cid = exporter = volume = None
     started = time.monotonic()
     outcome = {"status": "ENVIRONMENT_ERROR", "exitCode": None, "stdout": "", "stderr": "",
-               "isolation": policy}
+               "isolation": policy, "recoveryRecord": str(lease.path)}
     try:
         volume = docker("volume", "create", "--label", "io.ohmyluke.preparation=true",
+                        "--label", LABEL + "=" + lease.id,
                         "--driver", "local", "--opt", "type=tmpfs", "--opt", "device=tmpfs",
                         "--opt", "o=size=256m,uid=1000,gid=1000,mode=700", name).decode().strip()
         cid = docker("create", "--name", name, "--label", "io.ohmyluke.preparation=true",
+                     "--label", LABEL + "=" + lease.id,
                      "--network", "none", "--read-only", "--cap-drop", "ALL",
                      "--security-opt", "no-new-privileges", "--memory", "1g", "--memory-swap", "1g",
                      "--cpus", "2", "--pids-limit", "64", "--ulimit", "nofile=256:256",
@@ -154,6 +157,7 @@ def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000,
             # Docker cp does not reliably expose tmpfs contents. A trusted, read-only
             # exporter sees this one frozen volume, never executing candidate code.
             exporter = docker("create", "--network", "none", "--read-only", "--cap-drop", "ALL",
+                              "--name", name + "-export", "--label", LABEL + "=" + lease.id,
                               "--security-opt", "no-new-privileges", "--memory", "256m", "--memory-swap", "256m",
                               "--cpus", "1", "--pids-limit", "16", "--log-driver", "none",
                               "--mount", f"type=volume,src={volume},dst=/capture,readonly,volume-nocopy",
@@ -176,15 +180,8 @@ def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000,
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, tarfile.TarError) as error:
         outcome.update(status="ENVIRONMENT_ERROR", stderr=str(error)[:2000])
     finally:
-        cleanup_errors = []
-        operations = [("rm", "--force", item) for item in (exporter, cid) if item]
-        if volume:
-            operations.append(("volume", "rm", volume))
-        for operation in operations:
-            try:
-                docker(*operation)
-            except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
-                cleanup_errors.append(str(error)[:2000])
+        cleanup_errors = cleanup(lease.record, docker)
+        lease.finish(cleanup_errors)
         outcome["isolation"]["removed"] = not cleanup_errors
         if cleanup_errors:
             outcome["isolation"]["cleanupErrors"] = cleanup_errors

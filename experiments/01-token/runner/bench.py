@@ -15,6 +15,8 @@ from report import build_report, protocol_hash, schedule
 from usage import summarize
 from readiness import live_readiness
 from container_worker import execute_container, image_identity
+from container_worker import docker
+from recovery import DEFAULT_ROOT, recover_abandoned
 
 
 def write_json(path, value):
@@ -120,6 +122,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("preflight")
+    recovery = commands.add_parser("recover", help="Clean abandoned owned workers; never silently resume an interrupted attempt")
+    recovery.add_argument("--registry", type=Path, default=DEFAULT_ROOT)
     dry = commands.add_parser("dry-run")
     dry.add_argument("output", type=Path)
     dry.add_argument("--task", choices=("a", "b", "c", "pilot"), default="pilot")
@@ -130,6 +134,8 @@ def main():
     args = parser.parse_args()
     if args.command == "preflight":
         print(json.dumps(preflight(), indent=2))
+    elif args.command == "recover":
+        print(json.dumps(recover_abandoned(docker, args.registry), indent=2))
     elif args.command == "dry-run":
         print(json.dumps(dry_run(args.output, args.task, args.mode, args.container_image), indent=2))
     else:

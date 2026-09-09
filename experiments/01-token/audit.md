@@ -64,4 +64,10 @@ CI는 `scripts/release/verify-reproducible.py`로 최초 결과를 포함한 3�
 
 유한한 함수 검사로 모든 악성 JVM 프로그램의 의미적 정확성을 증명하지는 않는다. 이번 수정은 재현한 우회 경로를 닫는 것이며 OS 취약점이나 모든 부채널에 대한 보증이 아니다. [bubblewrap 공식 보안 설명](https://github.com/containers/bubblewrap/blob/main/SECURITY.md)도 실제 경계가 실행 인자와 상위 정책에 달려 있다고 명시한다.
 
+## 추가 복구 검증
+
+자원 생성 요청 전에 실행 UUID와 소유권을 `local-runs/recovery`에 원자적으로 기록하고 파일·디렉터리를 fsync한다. 각 실행은 잠금을 유지하며, 새 컨테이너 진입 또는 `bench.py recover`에서 잠금이 풀린 미정리 기록을 회수한다. 컨테이너/볼륨의 UUID 라벨까지 일치해야 제거한다. 생성 응답을 받기 전 중단돼도 사전 기록한 이름으로 확인할 수 있다.
+
+실제 조정자 프로세스를 SIGKILL로 종료한 테스트에서 남은 자원을 회수하고 `INTERRUPTED`·`totalTokens=null` 기록을 보존했다. 활성 잠금 건너뛰기, 엔진 접속 실패 시 새 진입 거부, 복구 재실행의 멱등성, 다른 소유자 자원 보존도 검사했다. 기록은 작업자에게 마운트하지 않는다. 이것은 재실행 전에 정리하는 기능이며, 조정자가 없는 동안 즉시 정리하는 상주 서비스나 실제 전원 차단 시험은 아니다.
+
 재현: 저장소 루트에서 `PYTHONPATH=experiments/01-token/runner python3 -m unittest discover -s experiments/01-token/tests -v`. 결과와 남은 조건은 PR #38 및 예비 실험 #35에 기록한다.

@@ -7,10 +7,16 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import urllib.request
+import json
+import signal
+import subprocess
+import sys
+import time
 from unittest.mock import patch
 
 from container_worker import candidate_files, docker, execute_container
 from fixtures import prepare
+from recovery import recover_abandoned
 
 
 class TransferTests(unittest.TestCase):
@@ -49,7 +55,45 @@ class ContainerTests(unittest.TestCase):
         self.image = os.environ["OML_TEST_CONTAINER_IMAGE"]
 
     def run_code(self, code, **kwargs):
-        return execute_container(["python3", "-c", code], self.worker, self.image, **kwargs)
+        return execute_container(["python3", "-c", code], self.worker, self.image,
+                                 recovery_root=self.worker / "registry", **kwargs)
+
+    def test_killed_coordinator_is_recovered_without_reusing_attempt(self):
+        registry = self.worker / "registry"
+        command = f'''from container_worker import execute_container
+execute_container(['python3','-c', "import pathlib,time; pathlib.Path('/work/home/started').touch(); time.sleep(60)"],
+                  {str(self.worker)!r}, {self.image!r}, timeout=90, recovery_root={str(registry)!r})
+'''
+        process = subprocess.Popen([sys.executable, "-c", command], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 20
+            started = False
+            while time.monotonic() < deadline and process.poll() is None:
+                records = list(registry.glob("*.json"))
+                if records:
+                    identity = json.loads(records[0].read_text())["id"]
+                    try:
+                        docker("exec", "oml-prep-" + identity, "test", "-f", "/work/home/started")
+                        started = True
+                        break
+                    except RuntimeError:
+                        pass
+                time.sleep(.05)
+            self.assertTrue(started, "Worker did not start before crash injection")
+            os.kill(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
+            records = recover_abandoned(docker, registry)
+            self.assertEqual(1, len(records))
+            self.assertEqual("INTERRUPTED", records[0]["result"])
+            self.assertIsNone(records[0]["totalTokens"])
+            self.assertEqual([], recover_abandoned(docker, registry))
+            self.assert_ok(self.run_code("pass"))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            process.stderr.close()
+            recover_abandoned(docker, registry)
 
     def assert_ok(self, result):
         self.assertEqual("EXITED", result["status"], result)
