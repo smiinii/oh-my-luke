@@ -13,6 +13,7 @@ from execution import execute
 from fixtures import ROOT, prepare, task_spec
 from report import build_report, protocol_hash, schedule
 from usage import summarize
+from readiness import live_readiness
 
 
 def write_json(path, value):
@@ -33,12 +34,7 @@ def preflight():
                 tools[name]["version"] = probe.stdout.strip()[:200]
             except (OSError, subprocess.TimeoutExpired):
                 tools[name]["version"] = None
-    return {"synthetic": True, "actualAiCalls": 0, "tools": tools,
-            "liveReady": False,
-            "blockers": ["OML existing-file EDIT does not implement arbitrary file creation",
-                         "OMX session inventory and scope require real-log verification",
-                         "Authenticated CLI isolation and external MCP routes require pilot validation",
-                         "macOS process groups do not contain detached descendants; prefer Linux PID namespace"],
+    return {"synthetic": True, "actualAiCalls": 0, "tools": tools, **live_readiness(),
             "platform": sys.platform, "javaHome": str(java_home())}
 
 

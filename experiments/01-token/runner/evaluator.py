@@ -10,6 +10,7 @@ import uuid
 
 from execution import execute
 from fixtures import ROOT, copy_overlay, snapshot, task_spec
+from oracle import expected_observations
 
 
 def java_home():
@@ -65,9 +66,25 @@ def evaluate(task, candidate, baseline):
         classes = stage / "classes"
         classes.mkdir()
         hidden = [ROOT, Path(candidate)]
+        def run(argv, timeout=10, compiler=False):
+            # Each candidate process gets fresh scratch; classes and oracle stay immutable.
+            remaining = 120 - (time.monotonic() - started)
+            if remaining <= 0:
+                return {"status": "TIMED_OUT", "exitCode": -1, "stdout": "", "stderr": "evaluation deadline"}
+            # Bounds apply only to the small benchmark JVMs, never the user's JDK settings.
+            vm = ["-Xmx256m", "-XX:MaxMetaspaceSize=128m", "-XX:ActiveProcessorCount=2",
+                  "-XX:+DisableAttachMechanism", "-XX:-UsePerfData"]
+            if Path(argv[0]).name in ("javac", "javap"):
+                argv = [argv[0], *("-J" + flag for flag in vm), *argv[1:]]
+            elif Path(argv[0]).name == "java":
+                argv = [argv[0], *vm, *argv[1:]]
+            scratch = stage if compiler else stage / ("scratch-" + uuid.uuid4().hex)
+            scratch.mkdir(exist_ok=True)
+            return execute(argv, scratch, hidden, timeout=min(timeout, remaining),
+                           readable=[jdk, stage if compiler else classes], network=False)
         sources = sorted(str(p) for p in (stage / "src").rglob("*.java"))
-        compiled = execute([str(jdk / "bin/javac"), "--release", "21", "-proc:none", "-d", str(classes),
-                            *sources, str(stage / "Judge.java")], stage, hidden, timeout=30)
+        compiled = run([str(jdk / "bin/javac"), "--release", "21", "-proc:none", "-d", str(classes),
+                        *sources, str(stage / "Judge.java")], timeout=30, compiler=True)
         if compiled["status"] == "ENVIRONMENT_ERROR":
             return result("ENVIRONMENT_ERROR", "compiler-environment", compiled["stderr"])
         if compiled["status"] != "EXITED":
@@ -76,21 +93,20 @@ def evaluate(task, candidate, baseline):
             return result("FAILED", "compile-failed", compiled["stderr"])
         classpath = [str(jdk / "bin/java"), "-ea", "-cp", str(classes)]
         for file in sorted((stage / "src/test/java/benchmark/order").glob("*Checks.java")):
-            checked = execute([*classpath, "benchmark.order." + file.stem], stage, hidden, timeout=10)
+            checked = run([*classpath, "benchmark.order." + file.stem])
             if checked["status"] == "ENVIRONMENT_ERROR":
                 return result("ENVIRONMENT_ERROR", "test-environment", checked["stderr"])
             if checked["status"] != "EXITED" or checked["exitCode"] != 0:
                 return result("FAILED", "public-test-failed", checked["stderr"])
-        nonce = uuid.uuid4().hex
-        judged = execute([*classpath, "benchmark.order.Judge", task, nonce], stage, hidden, timeout=10)
+        judged = run([*classpath, "benchmark.order.Judge", task])
         if judged["status"] == "ENVIRONMENT_ERROR":
             return result("ENVIRONMENT_ERROR", "judge-environment", judged["stderr"])
-        if judged["status"] != "EXITED" or judged["exitCode"] != 0 or "JUDGE_PASS:" + nonce not in judged["stdout"].splitlines():
+        if judged["status"] != "EXITED" or judged["exitCode"] != 0 or expected_observations(task) != judged["stdout"].splitlines():
             return result("FAILED", "requirements-failed", judged["stderr"])
         if task == "c":
             for service in ("CheckoutService", "QuoteService"):
-                disassembly = execute([str(jdk / "bin/javap"), "-c", "-p", "-classpath", str(classes),
-                                       "benchmark.order." + service], stage, hidden, timeout=10)
+                disassembly = run([str(jdk / "bin/javap"), "-c", "-p", "-classpath", str(classes),
+                                   "benchmark.order." + service])
                 code = disassembly["stdout"]
                 if disassembly["status"] == "ENVIRONMENT_ERROR":
                     return result("ENVIRONMENT_ERROR", "disassembly-environment", disassembly["stderr"])
@@ -113,13 +129,13 @@ public final class OrderCalculator {
 }
 ''')
             if task in ("a", "b"):
-                mutant = execute([str(jdk / "bin/javac"), "--release", "21", "-proc:none", "-d", str(classes),
-                                  str(calculator)], stage, hidden, timeout=30)
+                mutant = run([str(jdk / "bin/javac"), "--release", "21", "-proc:none", "-d", str(classes),
+                              str(calculator)], timeout=30, compiler=True)
                 if mutant["exitCode"] != 0:
                     return result("ENVIRONMENT_ERROR", "mutant-compile-failed", mutant["stderr"])
                 killed = False
                 for name in added:
-                    checked = execute([*classpath, "benchmark.order." + Path(name).stem], stage, hidden, timeout=10)
+                    checked = run([*classpath, "benchmark.order." + Path(name).stem])
                     if checked["status"] == "ENVIRONMENT_ERROR":
                         return result("ENVIRONMENT_ERROR", "mutation-test-environment", checked["stderr"])
                     killed |= checked["status"] == "EXITED" and checked["exitCode"] != 0

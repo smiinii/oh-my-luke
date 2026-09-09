@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -99,3 +100,14 @@ class UsageTests(unittest.TestCase):
     def test_empty_requires_verified_no_calls(self):
         self.assertIsNone(self.result([])["totalTokens"])
         self.assertEqual(0, summarize({"sessions": [], "inventoryComplete": True, "noModelCallsVerified": True}, self.root)["totalTokens"])
+
+    def test_fifo_and_hardlinked_logs_are_incomplete_without_blocking(self):
+        session = self.session("p")
+        path = self.root / session["log"]
+        path.unlink()
+        os.mkfifo(path)
+        self.assertIsNone(self.result([session])["totalTokens"])
+        path.unlink()
+        other = self.session("other")
+        os.link(self.root / other["log"], path)
+        self.assertIsNone(self.result([session])["totalTokens"])

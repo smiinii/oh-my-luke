@@ -1,6 +1,7 @@
 """Conservative session accounting. Inventory/coverage must be proved by adapter."""
 import hashlib
 import json
+import stat
 from pathlib import Path
 
 FIELDS = ("input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens")
@@ -115,7 +116,10 @@ def summarize(manifest, log_root):
             path = (log_root / session["log"]).resolve(strict=True)
             if not path.is_relative_to(log_root) or Path(session["log"]).is_absolute():
                 raise ValueError("log-path-escape")
-            if path.stat().st_size > 64 * 1024 * 1024:
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("log-not-regular-independent-file")
+            if info.st_size > 64 * 1024 * 1024:
                 raise ValueError("log-size-limit")
             raw = path.read_bytes()
             digest = hashlib.sha256(raw).hexdigest()

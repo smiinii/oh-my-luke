@@ -55,6 +55,27 @@ assert p.returncode != 0
 '''
         self.assertEqual(0, self.run_code(code)["exitCode"])
 
+    def test_worker_cannot_signal_host_coordinator(self):
+        code = f'''import os
+try: os.kill({os.getpid()}, 0)
+except (PermissionError, ProcessLookupError): pass
+else: raise AssertionError("host coordinator can be signalled")
+'''
+        result = self.run_code(code)
+        self.assertEqual(0, result["exitCode"], result)
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS data volume alias")
+    def test_macos_volume_alias_cannot_read_peer(self):
+        alias = Path("/System/Volumes/Data") / str(self.peer / "answer.txt").lstrip("/")
+        if not alias.is_file():
+            self.skipTest("No separate data volume alias on this host")
+        result = self.run_code(f'''from pathlib import Path
+try: Path({str(alias)!r}).read_text()
+except OSError: pass
+else: raise AssertionError("data-volume alias readable")
+''')
+        self.assertEqual(0, result["exitCode"], result)
+
     def test_common_network_capability_is_not_disabled(self):
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
