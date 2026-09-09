@@ -84,6 +84,23 @@ codex exec --json --ephemeral
 - OML은 빠르게 바뀌는 모델 목록을 자체 허용 목록으로 복제하지 않는다. 모델 이름의 문자열·제어문자 경계를 검사하고, 실제 사용 가능 여부는 사용자의 CLI와 계정이 판정한다.
 - Java 런타임 설정과 `omluke run <task.json> --model <모델> --reasoning <강도>`에서 선택한다. 개발 빌드의 [OML 설정 저장·상속](execution-settings.md)은 새 작업표의 빈 모델 필드에 적용하고, 재개는 저장한 선택을 사용한다. 프로젝트 고정이 있으면 사용자 OML 기본값을 병합하지 않는다.
 
+## 모델 목록 조회용 짧은 연결
+
+개발 빌드의 선택 화면과 `omluke models`는 별도의 `codex app-server --listen stdio://` 프로세스를 사용한다. 기존 작업의 `codex exec` 실행 경로를 대체하지 않는다.
+
+1. `initialize` 응답 확인 → `initialized` 알림.
+2. `account/read`에 `refreshToken: false`를 보내고 ChatGPT 로그인인지 확인.
+3. `model/list`에 `includeHidden: false`, 페이지당 20개를 요청. 실제 실행 인자는 `id`가 아니라 `model` 필드를 사용.
+4. 검증된 모델 이름·표시 이름·권장 표시만 반환하고 조회 프로세스를 정리.
+
+모델 목록은 최대 5페이지·100개이며 반복 커서, 중복 모델, 필수 필드 누락/잘못된 타입은 부분 목록으로 성공 처리하지 않는다. 모델 응답은 추가 필드를 허용해 프로토콜의 호환 가능한 확장을 수용한다. 입력 JSON의 중복 키·뒤에 붙은 문서·지나친 중첩, 잘못된 응답 ID와 서버 요청은 거부한다. 계정 확인 이후 계정 변경 알림이 오면 목록을 폐기한다.
+
+기본 조회 제한은 10초이며 실패 후 자식 프로세스 정리 시간이 추가될 수 있다. stdout은 줄당 128 KiB·전체 512 KiB·메시지 128개, stderr는 64 KiB로 제한한다. 원문 stderr/계정 응답/오류 본문을 화면이나 파일에 저장하지 않는다. 프로세스 자식 조회 권한이 없으면 서버를 시작하지 않고 조회 불가로 반환한다. 이것이 별도 OS 샌드박스나 악성 프로세스 전체 격리를 보증하는 것은 아니다.
+
+`thread/start`, `turn/start`, 로그인/로그아웃, 설정 변경, 한도 리셋은 호출하지 않는다. OML은 원시 인증 파일을 읽지 않지만 공식 CLI 자체는 메타데이터 조회 과정에서 자신의 캐시·로그를 갱신하거나 서버에 접속할 수 있다. 초기화·인증·모델 목록만 검사한 것으로 실제 AI 작업 성공이나 모든 모델의 계정 권한을 보증하지 않는다.
+
+근거: [공식 stdio 프로토콜](https://learn.chatgpt.com/docs/app-server#protocol), [초기화](https://learn.chatgpt.com/docs/app-server#initialization), [모델 목록](https://learn.chatgpt.com/docs/app-server#models), [계정 조회](https://learn.chatgpt.com/docs/app-server#auth-endpoints). 버전별 기능 차이는 조회 실패로 처리한다. 계정 요금제별 모델 목록을 OML에 하드코딩하지 않는다.
+
 ## 실행 결과와 사용량
 
 JSONL에서 최종 에이전트 메시지, Codex 세션 ID와 `turn.completed.usage`를 읽는다. 캐시 입력과 추론 출력은 각각 입력·출력의 하위 항목으로 별도 기록하고, 정책용 전체 기록 토큰은 입력과 출력만 더한다. 사용량 필드가 일부 없거나 알 수 없는 스키마이면 응답 성공은 보존하고 사용량만 `unavailable`로 둔다.

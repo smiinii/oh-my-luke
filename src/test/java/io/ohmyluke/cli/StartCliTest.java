@@ -230,6 +230,27 @@ class StartCliTest {
         assertEquals(1, resolutions.get());
     }
 
+    @Test void savedPickerModelIsUsedByTheExistingRunRuntime() throws Exception {
+        Path home = Files.createDirectory(project.resolve("fixture-home"));
+        var profiles = new io.ohmyluke.profile.ExecutionProfiles(home, project);
+        Queue<String> choices = new ArrayDeque<>(List.of("1", "1", "2", "1", "1"));
+        var stream = new PrintStream(output);
+        var picker = new RuntimePicker(choices::poll, stream);
+        var settings = new ProfileCli(profiles, project, stream, picker, () -> List.of(
+                new io.ohmyluke.profile.RuntimeDiscovery.Tool("codex", "Codex", "codex", false,
+                        io.ohmyluke.profile.RuntimeDiscovery.State.FOUND, project.resolve("fixture-codex"))),
+                path -> new io.ohmyluke.ai.codex.CodexModelCatalog(io.ohmyluke.ai.codex.CodexModelCatalog.Status.AVAILABLE,
+                        List.of(new io.ohmyluke.ai.codex.CodexModelCatalog.Model("picker-model", "Picker model", false))));
+        assertEquals(0, settings.execute(new String[] {"setup"}));
+        TaskSpec task = new TaskSpec(1, "Make ready", "hello.txt", ExecutionMode.DIRECT, 1, 1_000, 60_000, 2,
+                validation(), null, null);
+        Files.writeString(project.resolve("picker-task.json"), PresetJson.encode(task));
+        assertEquals(0, fixture(forbiddenPrompt(), () -> profiles.resolve().profile()).cli()
+                .execute(new String[] {"run", "picker-task.json", "--run-id", "picker-run"}));
+        assertEquals("picker-model", actualTask.get().model());
+        assertEquals(1, calls.get());
+    }
+
     private Fixture fixture(StartPrompt prompt) {
         return fixture(prompt, io.ohmyluke.profile.ExecutionProfile::defaults);
     }

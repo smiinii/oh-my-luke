@@ -174,7 +174,7 @@ Windows에서 기본 테스트 명령은 다음과 같습니다. 파일·프로�
 
 기존 [Direct·Loop의 `run` 명령](docs/preset-usage.md)과 `workflow` 명령은 작업표의 모드·선언을 사용하는 명시적 수동 진입점으로 유지합니다. `inspect`·`resume`은 저장 선택과 작업표를 사용하며 다시 묻지 않습니다.
 
-소스 개발 빌드에는 `setup`·`status`·`switch`로 Codex + OML 모델 기본값을 보존하고 프로젝트별로 고정하는 [실행 설정 1단계](docs/execution-settings.md)가 있습니다. **공개 RC에는 아직 없으며**, 다른 하네스 선택 화면·질문별 사용량 화면은 후속 개발입니다.
+소스 개발 빌드에는 Codex + OML의 [실행 환경 선택 화면과 설정 보존](docs/execution-settings.md)이 있습니다. `setup`·`switch`로 실행기·하네스·모델·범위를 선택하고, `status`로 설정을 확인합니다. `runtimes`는 알려진 CLI 탐지, `models`는 Codex의 모델 목록 조회입니다. **공개 RC에는 아직 없으며**, 다른 하네스는 탐지/준비 중 표시만 지원하고 실제 연결·질문별 사용량 화면은 후속 개발입니다.
 
 [Workflow 예제와 설계 장단점](docs/workflow-usage.md)에는 AI 없이 승인·재개를 확인하는 예제도 있습니다. 승인 게이트는 도구 권한을 변경하지 않습니다.
 

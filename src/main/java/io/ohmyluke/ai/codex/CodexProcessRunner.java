@@ -228,7 +228,7 @@ final class CodexProcessRunner {
         }
     }
 
-    private static void terminateTree(Process process, Set<ProcessHandle> observedDescendants) {
+    static void terminateTree(Process process, Set<ProcessHandle> observedDescendants) {
         terminateDescendants(process, observedDescendants);
         process.destroyForcibly();
         try {

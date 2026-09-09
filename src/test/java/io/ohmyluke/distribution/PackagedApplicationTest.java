@@ -99,6 +99,14 @@ class PackagedApplicationTest {
         assertEquals(0, switched.exitCode(), switched.output());
         Path settings = userHome.resolve(".oml/settings.json");
         String settingsBeforeInstall = sha256(settings);
+        Result discovered = run(List.of(launcher.toString(), "runtimes"), helpProject, true, Map.of("HOME", userHome.toString()));
+        assertEquals(0, discovered.exitCode(), discovered.output());
+        assertTrue(discovered.output().contains("Codex · 명령 미감지"), discovered.output());
+        Result noTerminal = run(List.of(launcher.toString(), "switch"), helpProject, true, Map.of("HOME", userHome.toString()));
+        assertEquals(2, noTerminal.exitCode(), noTerminal.output());
+        assertEquals(settingsBeforeInstall, sha256(settings));
+        Result noCodex = run(List.of(launcher.toString(), "models"), helpProject, true, Map.of("HOME", userHome.toString()));
+        assertEquals(1, noCodex.exitCode(), noCodex.output());
         Path prefix = directory.toRealPath().resolve("prefix");
         seedPreviousVersion(prefix, os);
         Path previousVersion = prefix.resolve("lib/omluke/versions/0.0.0-test/VERSION");

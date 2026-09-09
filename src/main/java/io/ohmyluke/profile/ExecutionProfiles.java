@@ -24,6 +24,11 @@ public final class ExecutionProfiles {
     }
 
     public boolean setup() { return global.initialize(); }
+    public ExecutionProfile selection(boolean projectScope) { return (projectScope ? requireProject() : global).load().orElse(null); }
+    public void changeIfUnchanged(boolean projectScope, ExecutionProfile expected, ExecutionProfile replacement) {
+        if (!projectScope && replacement == null) { throw new IllegalArgumentException("사용자 기본 설정은 삭제하지 않습니다."); }
+        (projectScope ? requireProject() : global).changeIfUnchanged(expected, replacement);
+    }
     public void saveGlobal(ExecutionProfile profile) { global.save(profile); }
     public void saveProject(ExecutionProfile profile) { requireProject().save(profile); }
     public boolean resetProject() { return requireProject().reset(); }

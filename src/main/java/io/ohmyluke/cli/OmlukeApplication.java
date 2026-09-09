@@ -63,7 +63,7 @@ public final class OmlukeApplication {
         String command = args.length == 0 ? "--help" : args[0];
         boolean informational = java.util.Set.of("--help", "-h", "--version", "-V").contains(command);
         if (!informational && !settingsHome.isAbsolute()) { throw new IllegalArgumentException("HOME은 기존 절대 폴더 경로여야 합니다."); }
-        boolean profileCommand = java.util.Set.of("setup", "status", "switch").contains(command);
+        boolean profileCommand = java.util.Set.of("setup", "status", "switch", "runtimes", "models").contains(command);
         Path project = informational ? cwd
                 : explicitProject == null && profileCommand && io.ohmyluke.profile.ProjectLocator.needsWorkFolder(cwd, home, settingsHome)
                         ? null : io.ohmyluke.profile.ProjectLocator.locate(cwd, home, explicitProject, settingsHome);
