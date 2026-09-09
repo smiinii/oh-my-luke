@@ -1,4 +1,4 @@
-"""Disposable, offline preparation workers. NOT a live-AI networking adapter.
+"""Disposable preparation workers with optional public web; no live AI adapter.
 
 Only an explicit project copy crosses the boundary; never mount host paths.
 The coordinator freezes every container process before reading candidate files.
@@ -16,6 +16,7 @@ import time
 
 from fixtures import snapshot
 from recovery import DEFAULT_ROOT, LABEL, Lease, cleanup
+from network import POLICY as NETWORK_POLICY, environment, gateway, forward
 
 
 def docker(*args, timeout=30, input=None):
@@ -30,8 +31,8 @@ def image_identity(image):
     if info.get("Os") != "linux" or not re.fullmatch(r"sha256:[a-f0-9]{64}", info["Id"]):
         raise ValueError("An existing Linux image with an immutable ID is required")
     return {"imageId": info["Id"], "architecture": info["Architecture"],
-            "policy": "offline-container-v1", "network": "none", "memoryBytes": 1073741824,
-            "cpus": 2, "pids": 64, "workBytes": 268435456, "tmpBytes": 67108864}
+            "policy": "offline-container-v1", "network": "none", "memoryBytes": 2147483648,
+            "cpus": 2, "pids": 128, "openFilesPerProcess": 1024, "workBytes": 1073741824, "tmpBytes": 67108864}
 
 
 def capture(command, timeout, limit):
@@ -86,7 +87,7 @@ def candidate_files(blob):
     return files
 
 
-def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000, task="pilot", recovery_root=DEFAULT_ROOT):
+def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000, task="pilot", recovery_root=DEFAULT_ROOT, public_web=False):
     if not argv or not 0 < timeout <= 1200 or type(output_limit) is not int or not 0 < output_limit <= 4_000_000:
         raise ValueError("Invalid execution limits")
     writable = Path(writable).resolve(strict=True)
@@ -95,6 +96,8 @@ def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000,
         raise ValueError("Unknown fixture task")
     baseline = snapshot(workspace)
     policy = image_identity(image)
+    if public_web:
+        policy.update(policy="public-web-container-v1", network=NETWORK_POLICY)
     lease = Lease(docker, recovery_root)
     name = lease.name
     cid = exporter = volume = None
@@ -102,20 +105,20 @@ def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000,
     outcome = {"status": "ENVIRONMENT_ERROR", "exitCode": None, "stdout": "", "stderr": "",
                "isolation": policy, "recoveryRecord": str(lease.path)}
     try:
+        network_mounts = gateway(docker, lease, policy["imageId"]) if public_web else []
         volume = docker("volume", "create", "--label", "io.ohmyluke.preparation=true",
                         "--label", LABEL + "=" + lease.id,
                         "--driver", "local", "--opt", "type=tmpfs", "--opt", "device=tmpfs",
-                        "--opt", "o=size=256m,uid=1000,gid=1000,mode=700", name).decode().strip()
+                        "--opt", "o=size=1g,uid=1000,gid=1000,mode=700", name).decode().strip()
         cid = docker("create", "--name", name, "--label", "io.ohmyluke.preparation=true",
                      "--label", LABEL + "=" + lease.id,
                      "--network", "none", "--read-only", "--cap-drop", "ALL",
-                     "--security-opt", "no-new-privileges", "--memory", "1g", "--memory-swap", "1g",
-                     "--cpus", "2", "--pids-limit", "64", "--ulimit", "nofile=256:256",
+                     "--security-opt", "no-new-privileges", "--memory", "2g", "--memory-swap", "2g",
+                     "--cpus", "2", "--pids-limit", "128", "--ulimit", "nofile=1024:1024",
                      "--ulimit", "core=0:0", "--log-driver", "none", "--user", "1000:1000",
                      "--workdir", "/work", "--mount", f"type=volume,src={volume},dst=/work,volume-nocopy",
                      "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777",
-                     "-e", "HTTP_PROXY=", "-e", "HTTPS_PROXY=", "-e", "ALL_PROXY=", "-e", "NO_PROXY=",
-                     "-e", "http_proxy=", "-e", "https_proxy=", "-e", "all_proxy=", "-e", "no_proxy=",
+                     *network_mounts, *environment(public_web),
                      "--entrypoint", "/bin/sleep", policy["imageId"], "infinity").decode().strip()
         # A private regular-file-only seed; no .git remote, hooks, caches or host config.
         seed = io.BytesIO()
@@ -131,6 +134,8 @@ def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000,
         docker("start", cid)
         docker("exec", "-i", cid, "tar", "-xf", "-", "--no-same-owner", "-C", "/work", input=seed.getvalue())
         docker("exec", cid, "mkdir", "/work/home", "/work/tmp")
+        if public_web:
+            forward(docker, cid)
         git_env = {"GIT_AUTHOR_NAME": "OML benchmark fixture", "GIT_COMMITTER_NAME": "OML benchmark fixture",
                    "GIT_AUTHOR_EMAIL": "fixture@example.invalid", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
                    "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z"}
@@ -149,8 +154,12 @@ def execute_container(argv, writable, image, timeout=10, output_limit=4_000_000,
         docker("pause", cid)
         state = json.loads(docker("inspect", cid))[0]
         mounts = state["Mounts"]
+        expected = {"/work": (volume, True)}
+        if public_web:
+            expected["/gateway"] = (name + "-gateway", False)
         if (not state["State"]["Paused"] or state["HostConfig"]["NetworkMode"] != "none"
-                or len(mounts) != 1 or mounts[0]["Type"] != "volume" or mounts[0]["Name"] != volume):
+                or len(mounts) != len(expected) or any(m["Type"] != "volume" or
+                    expected.get(m["Destination"]) != (m["Name"], m["RW"]) for m in mounts)):
             raise RuntimeError("Container isolation state did not match policy")
         outcome["isolation"]["frozenBeforeExport"] = True
         if status == "EXITED" and code == 0:

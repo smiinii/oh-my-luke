@@ -5,13 +5,15 @@ def live_readiness():
     return {
         "liveReady": False,
         "assessment": "BLOCKED",
-        "preparationOnly": "Optional offline-container-v1 exists; it does not satisfy live network/auth gates",
+        "preparationOnly": "Disposable container with optional public-web-isolated-host-v1; no live CLI entry point",
+        "acceptedLimitations": [
+            "PUBLIC_REMOTE_SHARING: public services may relay answers; not a content/DLP guarantee",
+            "HOST_ENGINE: Docker/kernel vulnerabilities and actual host power loss are not certified",
+        ],
         "blockers": [
-            "OPEN_WORKER_HOST_RELAY: open network can reach a host HTTP/IPC relay",
-            "HOST_FILESYSTEM: denylist is not a clean host/credential isolation boundary",
-            "REMOTE_REFERENCES: public reference implementations can be re-downloaded",
-            "MACOS_DETACHED_WORKER: process groups cannot contain detached worker descendants",
-            "RESOURCE_ISOLATION: aggregate memory/process/disk quotas require a disposable environment",
+            "LIVE_CONTAINER_ADAPTER: real CLI must use the disposable boundary; legacy local runner is not eligible",
+            "PRIVATE_PROTOCOL: pin private bundle hash and export identical worker-only packets before live runs",
+            "PROXY_COMPATIBILITY: real CLI/provider/MCP HTTP(S) proxy behavior must pass the pilot",
             "RUNTIME_CONFIG_AUTH: real Codex/OMX/OML config, hooks and authentication isolation unverified",
             "SESSION_INVENTORY: actual OMX child inventory and usage schema unverified",
             "PRODUCT_SUPPORT: OML new/multiple files and fixed build validation require issue #37",

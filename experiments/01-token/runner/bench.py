@@ -17,6 +17,7 @@ from readiness import live_readiness
 from container_worker import execute_container, image_identity
 from container_worker import docker
 from recovery import DEFAULT_ROOT, recover_abandoned
+from network import POLICY as NETWORK_POLICY
 
 
 def write_json(path, value):
@@ -41,9 +42,13 @@ def preflight():
             "platform": sys.platform, "javaHome": str(java_home())}
 
 
-def dry_run(output, task="pilot", mode="success", container_image=None):
+def dry_run(output, task="pilot", mode="success", container_image=None, public_web=False):
     task_spec(task)
+    if public_web and not container_image:
+        raise ValueError("Public web requires the disposable container boundary")
     isolation = image_identity(container_image) if container_image else {"policy": "legacy-local-regression", "network": "none"}
+    if public_web:
+        isolation.update(policy="public-web-container-v1", network=NETWORK_POLICY)
     if container_image:
         container_image = isolation["imageId"]  # Freeze once, never re-resolve a mutable tag per arm.
     output = Path(output).resolve()
@@ -57,7 +62,7 @@ def dry_run(output, task="pilot", mode="success", container_image=None):
         item["startCommit"] = baseline["startCommit"]
         baselines[item["runId"]] = baseline
     protocol = {"version": 1, "tasks": [task], "repetitions": 1, "timeoutSeconds": 1200,
-                "executor": "synthetic-python-worker", "network": "none", "isolation": isolation, "model": "NONE",
+                "executor": "synthetic-python-worker", "network": isolation["network"], "isolation": isolation, "model": "NONE",
                 "startCommits": {task: runs[0]["startCommit"]},
                 "toolHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                                for folder in ("runner", "evaluator", "tasks", "references")
@@ -85,7 +90,7 @@ def dry_run(output, task="pilot", mode="success", container_image=None):
         command = ["python3" if container_image else sys.executable, "-c", code] if mode != "environment_error" else ["/nonexistent/oml-fixture"]
         try:
             timeout = 0.1 if mode == "timeout" else 10
-            outcome = (execute_container(command, worker, container_image, timeout=timeout, task=task)
+            outcome = (execute_container(command, worker, container_image, timeout=timeout, task=task, public_web=public_web)
                        if container_image else execute(command, worker, [output, ROOT], timeout=timeout, network=False))
             if container_image and outcome.get("isolation", {}).get("workerStartCommit") != baseline["startCommit"]:
                 outcome.update(status="ENVIRONMENT_ERROR", stderr="Container start commit does not match frozen fixture")
@@ -128,7 +133,8 @@ def main():
     dry.add_argument("output", type=Path)
     dry.add_argument("--task", choices=("a", "b", "c", "pilot"), default="pilot")
     dry.add_argument("--mode", choices=("success", "fail", "timeout", "environment_error"), default="success")
-    dry.add_argument("--container-image", help="Explicit prebuilt offline image; no fallback when Docker fails")
+    dry.add_argument("--container-image", help="Explicit prebuilt preparation image; no fallback when Docker fails")
+    dry.add_argument("--public-web", action="store_true", help="Public HTTP(S) via per-run proxy; not remote answer-sharing prevention")
     report = commands.add_parser("report")
     report.add_argument("directory", type=Path)
     args = parser.parse_args()
@@ -137,7 +143,7 @@ def main():
     elif args.command == "recover":
         print(json.dumps(recover_abandoned(docker, args.registry), indent=2))
     elif args.command == "dry-run":
-        print(json.dumps(dry_run(args.output, args.task, args.mode, args.container_image), indent=2))
+        print(json.dumps(dry_run(args.output, args.task, args.mode, args.container_image, args.public_web), indent=2))
     else:
         directory = args.directory
         content = build_report(json.loads((directory / "manifest.json").read_text()),

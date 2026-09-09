@@ -7,4 +7,5 @@ ENV HOME=/work/home TMPDIR=/work/tmp GRADLE_USER_HOME=/work/home/.gradle \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
     PYTHONDONTWRITEBYTECODE=1 LC_ALL=C TZ=UTC
 USER 1000:1000
+COPY egress.py /opt/oml-preparation/egress.py
 WORKDIR /work

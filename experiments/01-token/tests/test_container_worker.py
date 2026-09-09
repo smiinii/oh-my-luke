@@ -62,7 +62,7 @@ class ContainerTests(unittest.TestCase):
         registry = self.worker / "registry"
         command = f'''from container_worker import execute_container
 execute_container(['python3','-c', "import pathlib,time; pathlib.Path('/work/home/started').touch(); time.sleep(60)"],
-                  {str(self.worker)!r}, {self.image!r}, timeout=90, recovery_root={str(registry)!r})
+                  {str(self.worker)!r}, {self.image!r}, timeout=90, recovery_root={str(registry)!r}, public_web=True)
 '''
         process = subprocess.Popen([sys.executable, "-c", command], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
@@ -110,6 +110,41 @@ assert subprocess.check_output(['java', '-cp', 'workspace', 'Hello']).strip() ==
 ''', timeout=30)
         self.assert_ok(result)
         self.assertTrue((self.worker / "workspace/Hello.java").is_file())
+
+    def test_public_web_runs_real_gradle_wrapper_without_host_cache(self):
+        result = execute_container(["/bin/sh", "-c", "cd workspace && ./gradlew --no-daemon test"],
+                                   self.worker, self.image, timeout=240, public_web=True,
+                                   recovery_root=self.worker / "registry")
+        self.assert_ok(result)
+        self.assertIn("BUILD SUCCESSFUL", result["stdout"])
+
+    def test_public_web_allows_https_packages_but_blocks_host_and_private_routes(self):
+        result = self.run_code('''import urllib.request, socket, pathlib
+urls = ['http://example.com/', 'https://example.com/', 'https://repo.maven.apache.org/maven2/org/junit/junit-bom/5.14.4/junit-bom-5.14.4.pom']
+for url in urls:
+    with urllib.request.urlopen(url, timeout=20) as response:
+        assert response.status == 200
+        assert len(response.read(1000000)) > 100
+for host in ['127.0.0.1', '169.254.169.254', '192.168.65.254', '[::1]', 'host.docker.internal']:
+    with socket.create_connection(('127.0.0.1', 18080), timeout=5) as s:
+        s.sendall(('CONNECT ' + host + ':443 HTTP/1.1\\r\\nHost: ' + host + '\\r\\n\\r\\n').encode())
+        assert b' 403 ' in s.recv(4096), host
+    with socket.create_connection(('127.0.0.1', 18080), timeout=5) as s:
+        s.sendall(('GET http://' + host + ':80/ HTTP/1.1\\r\\nHost: ' + host + '\\r\\n\\r\\n').encode())
+        assert b' 403 ' in s.recv(4096), host
+try: pathlib.Path('/gateway/override').write_text('bad')
+except OSError: pass
+else: raise AssertionError('gateway mount writable')
+s=socket.socket(); s.settimeout(.2)
+try: s.connect(('1.1.1.1',443))
+except OSError: pass
+else: raise AssertionError('direct proxy bypass allowed')
+finally: s.close()
+print('PUBLIC_WEB_OK')
+''', public_web=True, timeout=90)
+        self.assert_ok(result)
+        self.assertIn('PUBLIC_WEB_OK', result['stdout'])
+        self.assertEqual('NOT_PREVENTED', result['isolation']['network']['remoteAnswerSharing'])
 
     def test_host_peers_credentials_network_and_privilege_denied(self):
         (self.worker / "host-marker").write_text("private")
@@ -164,7 +199,7 @@ pathlib.Path('/work/home/previous-session').write_text('PRIVATE-PREVIOUS-RUN')
         self.assert_ok(self.run_code("from pathlib import Path; assert not Path('/work/home/previous-session').exists()"))
 
     def test_memory_exhaustion_is_not_success_and_is_cleaned(self):
-        result = self.run_code("data = bytearray(2 * 1024 * 1024 * 1024)", timeout=15)
+        result = self.run_code("data = bytearray(4 * 1024 * 1024 * 1024)", timeout=15)
         self.assertNotEqual(0, result["exitCode"], result)
         self.assertTrue(result["isolation"]["removed"])
 
@@ -189,15 +224,16 @@ pathlib.Path('/work/home/previous-session').write_text('PRIVATE-PREVIOUS-RUN')
                 docker(*args)
 
     def test_resource_limits_are_enforced(self):
-        result = self.run_code('''import pathlib, subprocess
+        result = self.run_code('''import pathlib, subprocess, resource
 c=pathlib.Path('/sys/fs/cgroup')
-assert (c/'memory.max').read_text().strip() == '1073741824'
+assert resource.getrlimit(resource.RLIMIT_NOFILE) == (1024, 1024)
+assert (c/'memory.max').read_text().strip() == '2147483648'
 assert (c/'memory.swap.max').read_text().strip() == '0'
-assert (c/'pids.max').read_text().strip() == '64'
+assert (c/'pids.max').read_text().strip() == '128'
 quota, period = map(int, (c/'cpu.max').read_text().split()); assert quota / period == 2
 children=[]
 try:
-    for _ in range(100):
+    for _ in range(160):
         try: children.append(subprocess.Popen(['sleep','30']))
         except BlockingIOError: break
     else: raise AssertionError('PID limit not enforced')

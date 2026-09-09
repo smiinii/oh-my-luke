@@ -106,7 +106,7 @@ class EvaluationBoundaryTests(unittest.TestCase):
                 self.assertEqual(0, probe["exitCode"], probe)
                 self.assertIn("DISPOSABLE-RELAY-MARKER", probe["stdout"])
                 self.assertFalse(live_readiness()["liveReady"])
-                with self.assertRaisesRegex(RuntimeError, "OPEN_WORKER_HOST_RELAY"):
+                with self.assertRaisesRegex(RuntimeError, "LIVE_CONTAINER_ADAPTER"):
                     require_live_ready()
             finally:
                 server.shutdown()

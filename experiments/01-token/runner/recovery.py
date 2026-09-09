@@ -61,7 +61,8 @@ def lock_record(path):
 def cleanup(record, docker, observed=None):
     base = "oml-prep-" + record["id"]
     errors = []
-    for kind, name in (("container", base + "-export"), ("container", base), ("volume", base)):
+    for kind, name in (("container", base + "-export"), ("container", base), ("container", base + "-gateway"),
+                       ("volume", base), ("volume", base + "-gateway")):
         try:
             try:
                 info = json.loads(docker(kind, "inspect", name))[0]

@@ -46,15 +46,19 @@ python3 experiments/01-token/runner/bench.py report experiments/01-token/local-r
 
 ## 일회용 컨테이너 준비 검사
 
-Docker Engine 또는 Docker Desktop이 실행되어 있어야 한다. 이미지는 Java21·Python·Git만 포함하며 인증·평가기·정답을 넣지 않는다. 빌드에는 인터넷이 필요하지만 작업 컨테이너의 인터넷은 차단한다. 모든 비교군에 같은 이미지 ID를 사용한다. 현재 고정 베이스는 Linux x64이며 ARM 호스트의 실행은 에뮬레이션 검사이지 네이티브 성능 자료가 아니다.
+Docker Engine 또는 Docker Desktop이 실행되어 있어야 한다. 이미지는 Java21·Python·Git과 네트워크 중계 코드만 포함하며 인증·평가기·정답을 넣지 않는다. 작업 컨테이너 자체의 네트워크는 끄고, `--public-web`일 때만 별도 게이트웨이로 공개 HTTP(S)를 허용한다. 모든 비교군에 같은 이미지 ID를 사용한다. 현재 고정 베이스는 Linux x64이며 ARM 호스트의 실행은 에뮬레이션 검사이지 네이티브 성능 자료가 아니다.
 
 ```bash
 docker build --platform linux/amd64 -t oml-preparation:local experiments/01-token/container
 OML_TEST_CONTAINER_IMAGE=oml-preparation:local PYTHONPATH=experiments/01-token/runner python3 -m unittest discover -s experiments/01-token/tests -p test_container_worker.py -v
-python3 experiments/01-token/runner/bench.py dry-run experiments/01-token/local-runs/container-001 --task a --container-image oml-preparation:local
+python3 experiments/01-token/runner/bench.py dry-run experiments/01-token/local-runs/container-001 --task a --container-image oml-preparation:local --public-web
 ```
 
-Docker 실패 시 로컬 경로로 자동 전환하지 않는다. 컨테이너 검사 미실행/skip은 통과가 아니다. CI의 별도 Linux 작업에서 해당 검사를 필수 실행한다. 인터넷·패키지 다운로드·MCP를 허용한 실제 실험은 이 오프라인 검사의 범위 밖이다.
+Docker/프록시 실패 시 직접 네트워크나 로컬 경로로 전환하지 않는다. 미실행/skip은 통과가 아니다. CI의 별도 Linux 작업에서 실제 웹·패키지·Gradle 실행과 호스트/사설망 차단을 필수 검사한다. 인증·CLI·MCP 호환성과 원격 공개 서비스를 통한 답안 공유 방지는 이 검사로 증명하지 않는다.
+
+## 비공개 과제 동결
+
+`runner/holdout.py scaffold SOURCE`, `seal SOURCE DESTINATION`, `check BUNDLE --expected-hash SHA256` 순서로 사용한다. 경로는 모든 Git 저장소 밖이어야 하며 기존 동결본을 덮어쓰지 않는다. SHA256은 동결 시 출력한 값을 별도로 보관한다. 작업자용 `worker/`, 조정자 전용 `reference/`·`judge/`·`spec.json`을 분리한다. 비공개 원본이나 정답을 PR·CI 아티팩트로 업로드하지 않는다. 실제 실행기에 연결하고 동일 입력·해시를 run manifest에 고정하는 작업은 실측 진입 조건으로 유지한다.
 
 ## 출력 구조
 
@@ -75,6 +79,6 @@ demo-001/
 
 ## 실제 실험 진입 기준
 
-`preflight`는 현재 `assessment: BLOCKED`, `liveReady: false`와 구체적인 미해결 조건을 반환한다. #37 및 실제 실행기·전체 세션 계측·호스트 중계·원격 자료 접근 검증이 완료되어야 #35를 실행할 수 있다. 가짜 로그에서 통과한 계측을 실제 OMX 로그에서도 정확하다고 주장하지 않는다.
+`preflight`는 현재 `assessment: BLOCKED`, `liveReady: false`와 구체적인 미해결 조건을 반환한다. #37 및 실제 실행기의 컨테이너 연결·인증·전체 세션 계측·프록시 호환성·비공개 프로토콜 고정이 필요하다. 공개 인터넷을 유지하므로 원격 서비스의 답안 공유까지 완전히 차단하지 않는 한계는 수용한 조건으로 별도 표시한다. 가짜 로그 계측을 실제 OMX에서도 정확하다고 주장하지 않는다.
 
 모델·추론·각 도구 모드·공통 도구 설정은 예비 실행 전에 고정한다. 본 실험 초안은 3과제 × 3도구 × 3회 = 27회다. 예비 실험의 실제 사용량과 시간을 확인한 후 실행 규모를 확정한다.

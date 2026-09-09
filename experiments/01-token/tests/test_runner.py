@@ -42,7 +42,7 @@ class RunnerTests(unittest.TestCase):
         outcome = {"status": "ENVIRONMENT_ERROR", "exitCode": 0, "elapsedMillis": 1,
                    "stdout": "", "stderr": "Cleanup incomplete",
                    "isolation": {"removed": False, "workerStartCommit": baseline["startCommit"]}}
-        with patch("bench.image_identity", return_value={"imageId": "test-image"}), \
+        with patch("bench.image_identity", return_value={"imageId": "test-image", "network": "none"}), \
              patch("bench.execute_container", return_value=outcome) as executor:
             output = self.root / "cleanup-failure"
             records = dry_run(output, container_image="test-image")
