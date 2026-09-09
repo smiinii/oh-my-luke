@@ -86,8 +86,7 @@ val packageAppImage = tasks.register<Exec>("packageAppImage") {
     group = "distribution"
     description = "Builds a platform-specific OML image with its own Java runtime."
     dependsOn(tasks.installDist, cleanPackageAppImage)
-    // jpackage may create a different Linux CDS archive while another test JVM is active.
-    // Keep packaging serial with test whenever both tasks share one Gradle invocation.
+    // Avoid competing with verification JVMs in the same Gradle invocation.
     mustRunAfter(tasks.test)
     // Declare the parent only: Gradle may create an output directory before Exec,
     // while jpackage requires the final <name>.app/<name> path not to exist.
@@ -102,7 +101,10 @@ val packageAppImage = tasks.register<Exec>("packageAppImage") {
         "--main-class", application.mainClass.get(),
         "--app-version", nativePackageVersion,
         "--add-modules", "java.base,java.desktop,java.sql",
-        "--jlink-options", "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
+        // Repeated Temurin 21.0.12 Linux builds produced different java.lang.invoke
+        // generated classes in lib/modules. Keep the JDK originals instead of
+        // link-time regeneration; verify archives byte-for-byte in CI.
+        "--jlink-options", "--strip-debug --no-header-files --no-man-pages --compress=zip-6 --disable-plugin generate-jli-classes"
     )
 }
 
