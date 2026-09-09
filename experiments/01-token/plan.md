@@ -77,6 +77,21 @@ demo-001/
 
 현재 codex/omx/oml 이름은 **가짜 실행의 비교 칸**이다. 세 실제 도구를 호출했다는 뜻이 아니다. 모든 테스트 수치에 `synthetic: true`, `actualAiCalls: 0`을 기록한다.
 
+## 공유 규칙과 오염 검토
+
+공통 `EXPERIMENT-RULES.md`는 공개·비공개 작업 패킷에 동일하게 붙인다. 비공개 동결본은 그대로 두고 규칙 해시는 별도로 고정한다. `prompt.txt`는 규칙+과제 원문이며 실제 CLI 연결 시 이 입력 전달을 검증해야 한다. **실험 중 로컬 커밋은 허용, push·PR·Gist·자료 업로드는 금지**다. 승인된 AI 추론 입력은 허용하되 다른 비교군 자료를 전달하지 않는다. 전체 비교 종료·판정 확정·민감정보 확인 후 운영자가 공개한다. 이번 준비 PR과 CI에는 공개/가짜 자료만 들어간다.
+
+실행 기본 상태는 `UNREVIEWED`이며 비교에 쓰지 않는다. 운영자는 stdout/stderr/실행 기록과 필요 시 별도 `review-evidence.txt`를 확인해 아래처럼 기록한다. `CLEAR`는 관측 근거에서 위반을 찾지 못했다는 뜻이지 완전한 통신 검사 보증이 아니다. 단순 URL/명령어 등장만으로 오염을 단정하지 않는다.
+
+```bash
+python3 experiments/01-token/runner/bench.py review RUN_DIRECTORY a-1-codex --decision CLEAR --reviewer operator --reason '관측 실행 기록 검토에서 외부 공유 위반을 찾지 못함'
+python3 experiments/01-token/runner/bench.py review RUN_DIRECTORY a-1-codex --decision CONTAMINATED --reviewer operator --reason '추가 근거에서 실험 답안 외부 공유 확인' --evidence review-evidence.txt
+python3 experiments/01-token/runner/bench.py report RUN_DIRECTORY
+python3 experiments/01-token/runner/bench.py report RUN_DIRECTORY --format csv
+```
+
+두 review 명령을 기계적으로 연속 실행하지 않는다. 두 번째는 나중에 오염 근거가 발견된 경우의 예다. 이력은 덮어쓰지 않고 추가하며 오염 판정을 정상으로 승격하지 않는다. 결과·증거 해시가 달라지면 집계를 거부한다. 원시 결과·토큰은 보존하고 검토 이력은 작업자 밖 `reviews/`에 둔다. 보고서 명령은 최신 검토를 반영해 출력하며 기존 원시 결과와 최초 보고서를 덮어쓰지 않는다.
+
 ## 실제 실험 진입 기준
 
 `preflight`는 현재 `assessment: BLOCKED`, `liveReady: false`와 구체적인 미해결 조건을 반환한다. #37 및 실제 실행기의 컨테이너 연결·인증·전체 세션 계측·프록시 호환성·비공개 프로토콜 고정이 필요하다. 공개 인터넷을 유지하므로 원격 서비스의 답안 공유까지 완전히 차단하지 않는 한계는 수용한 조건으로 별도 표시한다. 가짜 로그 계측을 실제 OMX에서도 정확하다고 주장하지 않는다.
