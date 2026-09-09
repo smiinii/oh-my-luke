@@ -389,6 +389,24 @@ class CodexCliRuntimeTest {
     }
 
     @Test
+    void drainsBothOutputsFromRapidlyExitingCommands() throws Exception {
+        Path executable = executable("""
+                printf 'codex-cli 1.2.3\\n'
+                printf 'probe-diagnostic\\n' >&2
+                """);
+        CodexProcessRunner runner = new CodexProcessRunner();
+        for (int attempt = 0; attempt < 50; attempt++) {
+            CodexProcessResult result = runner.run(
+                    java.util.List.of(executable.toString()), project, new byte[0],
+                    Duration.ofSeconds(5), 4096);
+            assertEquals(0, result.exitCode());
+            assertEquals("codex-cli 1.2.3\n", result.stdout(), "attempt " + attempt);
+            assertEquals("probe-diagnostic\n", result.stderr(), "attempt " + attempt);
+            assertFalse(result.outputLimitExceeded());
+        }
+    }
+
+    @Test
     void probesOfficialVersionAndLoginCommandsWithoutReadingCredentialFiles() throws Exception {
         Path arguments = project.resolve("probe-arguments.txt");
         Path executable = executable("""

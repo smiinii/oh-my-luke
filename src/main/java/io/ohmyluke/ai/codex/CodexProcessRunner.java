@@ -90,9 +90,11 @@ final class CodexProcessRunner {
             terminateDescendants(process, descendants);
             closeQuietly(process.getOutputStream());
             boolean writeSucceeded = awaitWrite(inputWritten);
-            closeProcessStreams(process);
+            // Process exit does not mean the capture tasks have drained the pipes.
+            // Closing first can silently lose even a short --version response.
             CapturedOutput standardOutput = awaitOutput(stdout, standardOutputCapture);
             CapturedOutput standardError = awaitOutput(stderr, standardErrorCapture);
+            closeProcessStreams(process);
             int exitCode = completed ? process.exitValue() : -1;
             return new CodexProcessResult(
                     true,
