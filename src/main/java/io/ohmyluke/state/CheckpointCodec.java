@@ -14,7 +14,10 @@ public final class CheckpointCodec {
     private final ObjectMapper mapper;
 
     public CheckpointCodec() {
-        mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        mapper = com.fasterxml.jackson.databind.json.JsonMapper.builder()
+                .enable(com.fasterxml.jackson.core.StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+                .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .enable(SerializationFeature.INDENT_OUTPUT).build();
     }
 
     public String encode(RunCheckpoint checkpoint) {

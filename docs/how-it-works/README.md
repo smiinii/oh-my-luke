@@ -38,6 +38,7 @@ OML은 AI 모델 자체가 아니다. 사용자의 목표를 작은 단계로 �
 15. [실제 AI 없이 비교 실험 준비하기](15-experiment-preparation.md)
 16. [실행 설정을 보존하고 프로젝트를 구별하기](16-execution-settings.md)
 17. [실행기와 모델을 선택하는 터미널 화면](17-runtime-picker.md)
+18. [질문별 사용량을 확인하는 방법](18-question-usage.md)
 
 ## 지금 가능한 것
 

@@ -399,6 +399,7 @@ public final class OmlukeCli {
         target.println("       omluke switch                  (대화형 실행 환경 선택)");
         target.println("       omluke setup --defaults         (질문 없이 최초 기본값 준비, 기존 값 보존)");
         target.println("       omluke runtimes | models       (PATH 탐지 / Codex 모델 목록 조회)");
+        target.println("       omluke usage [실행ID] [--format table|json|csv] [--details]");
         target.println("       omluke switch --scope global|project --model <모델ID>");
         target.println("       omluke switch --scope global|project --inherit-model");
         target.println("       omluke switch --scope project --inherit");
