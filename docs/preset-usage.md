@@ -29,7 +29,7 @@ codex login status
 omluke run task.json --model YOUR_MODEL --reasoning low
 ```
 
-모델을 지정하지 않으면 작업표의 `model`을 사용한다. 작업표도 `null`이면 사용자 Codex 설정을 상속한다. 추론 강도도 같은 우선순위다. 지원하지 않는 모델은 Codex가 실패로 보고하며 OML이 임의로 다른 모델로 바꾸지 않는다. 실제 설치 전에는 위 예제의 `"$OML_BIN"`을 사용한다.
+모델을 지정하지 않으면 작업표의 `model`을 사용한다. 개발 빌드에서는 작업표도 `null`이면 [선택된 OML 설정](execution-settings.md), 그다음 Codex 설정을 사용한다. 추론 강도는 CLI 옵션 → 작업표 → Codex 설정이다. 지원하지 않는 모델은 Codex가 실패로 보고하며 OML이 임의로 다른 모델로 바꾸지 않는다. 실제 설치 전에는 위 예제의 `"$OML_BIN"`을 사용한다.
 
 ```text
 CLI의 실행별 선택 → task.json의 선택 → 사용자 Codex 설정
