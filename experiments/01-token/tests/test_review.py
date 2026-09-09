@@ -87,6 +87,14 @@ class ReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.report()
 
+    def test_individual_result_changed_after_review_blocks_reaggregation(self):
+        self.review()
+        path = self.root / "a-1-codex/result.json"
+        modified = dict(self.records[0], status="FAILED")
+        path.write_text(json.dumps(modified))
+        with self.assertRaisesRegex(ValueError, "Result files disagree"):
+            self.report()
+
     def test_missing_linked_or_worker_evidence_and_unknown_identity_fail_closed(self):
         for identity in ("../a-1-codex", "a-2-codex"):
             with self.assertRaises(ValueError):

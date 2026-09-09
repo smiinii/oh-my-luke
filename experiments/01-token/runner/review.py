@@ -69,6 +69,8 @@ def history(root, record):
         raise ValueError("Review directory links forbidden")
     if not directory.exists():
         return []
+    if json.loads(safe_read(root, identity + "/result.json")) != record:
+        raise ValueError("Result files disagree")
     result, previous = [], None
     for index, path in enumerate(sorted(directory.iterdir()), 1):
         if path.name != f"{index:06d}.json":
